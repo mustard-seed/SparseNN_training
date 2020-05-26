@@ -1,0 +1,14 @@
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - pip=20.0
+  - cpuonly
+  - python=3.6.10
+  - pytorch=1.5.0
+  - setuptools=46.4.0=py36_0
+  - torchvision=0.6.0
+  - pip:
+    - -r file:requirements.txt
+
