@@ -2,6 +2,8 @@
 
 set -e 
 
+module load gnu8
+module load openmpi3
 export ENV_PREFIX=$PWD/env
 export HOROVOD_WITH_MPI=1
 export HOROVOD_WITHOUT_GLOO=1
