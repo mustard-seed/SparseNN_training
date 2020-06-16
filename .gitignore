@@ -7,3 +7,6 @@
 .idea/
 
 env/
+lab
+notebooks/
+.ipynb_checkpoints/
