@@ -117,7 +117,7 @@ def unPruneNetwork(net):
         continue
 
 ###Regularization contribution calculation#####
-def calculateChannelGroupLasso(input, clusterSize=2):
+def calculateChannelGroupLasso(input : torch.Tensor, clusterSize=2) -> torch.Tensor:
   """
       Compute the group lasso according to the block size along channels
       input: torch.Tensor. The input tensor

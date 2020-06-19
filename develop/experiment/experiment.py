@@ -10,10 +10,63 @@ from torchvision import datasets, transforms, models
 import horovod.torch as hvd
 import yaml
 from easydict import EasyDict as edict
+from torch.utils.tensorboard import SummaryWriter
 from abc import ABC, abstractmethod
 
 import os
 import math
+
+# Make sure to import the global the following globals
+# Global list for storing the intermediate activation layers
+globalActivationDict = {}
+# Function hook used to intercept intermediate activation layers
+def hook_activation(module, input, output):
+  global globalActivationDict
+  globalActivationDict[module] = output
+
+# Global list for storing the weight tensors
+globalWeightDict = {}
+
+def accuracy(output, target, topk=(1,)):
+  """Computes the accuracy over the k top predictions for the specified values of k"""
+  with torch.no_grad():
+    maxk = max(topk)
+    batch_size = target.size(0)
+
+    _, pred = output.topk(maxk, 1, True, True)
+    pred = pred.t()
+    correct = pred.eq(target.view(1, -1).expand_as(pred))
+
+    res = []
+    for k in topk:
+      correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
+      res.append(correct_k.mul_(100.0 / batch_size))
+    return res
+
+
+class AverageMeter(object):
+  """Computes and stores the average and current value"""
+
+  def __init__(self, name, fmt=':f'):
+    self.name = name
+    self.fmt = fmt
+    self.reset()
+
+  def reset(self):
+    self.val = torch.tensor(0.)
+    self.sum = torch.tensor(0.)
+    self.count = torch.tensor(0.)
+
+  def update(self, val):
+    val = hvd.allreduce(val.detach().cpu(), name=self.name)
+    self.val = val
+    self.sum += val
+    self.count += 1
+
+  @property
+  def avg(self):
+    return self.sum / self.count
+
 
 def generate_base_config():
   config = edict()
@@ -104,6 +157,13 @@ class experimentBase():
     )
     self.optimizer = None
     self.model = None
+    self.trainDataSet = None
+    self.trainDataLoader = None
+    self.trainSampler = None
+    self.valDataSet = None
+    self.valDataLoader = None
+    self.valDataSampler = None
+    self.logWriter = None
 
     # Load experiment setting from config file
     config = generate_base_config()
@@ -229,13 +289,115 @@ class experimentBase():
       }
       torch.save(state, path)
 
+  @abstractmethod
+  def apply_hook_activation(self, module: torch.nn.Module) -> None:
+    """
+    Specify what layer's activations should be extracted. To be called recursively
+    Calls experiment.hook_activation. Make sure to import hook_activaiton
+    :param module: Current top level module
+    :return: None
+    """
+    for m in module.children():
+      if isinstance(m, (torch.nn.Conv2d, torch.nn.Linear, torch.nn.ConvTranspose2d)):
+        m.register_forward_hook(hook_activation)
+      else:
+        self.apply_hook_activation(m)
 
-  def train_one_epoch(self):
+  @abstractmethod
+  def extract_weight(self, module: torch.nn.Module) -> None:
+    """
+    Helper function that specifies which layers' weight tensors should be extracted.
+    To be called recursively
+    :param module: torch.nn.Module
+    :return: None
+    """
+    for m in module.children():
+      if isinstance(m, (torch.nn.Conv2d, torch.nn.Linear, torch.nn.ConvTranspose2d)):
+        global globalWeightDict
+        globalWeightDict[m] = m.weight
+      else:
+        self.extract_weight(m)
+
+  def train_one_epoch(self, epoch: int) -> None:
     """
     Train the model for one epoch
     :return:
     """
-    pass
+    self.model.train()
+    # Shuffle the data set
+    if self.trainSampler is not None:
+      self.trainSampler.set_epoch(epoch)
+    # TODO: Initialize loss and accuracy meters
+    aggregateAccuracyTop1 = AverageMeter("Top1 Accuracy")
+    aggregateLoss = AverageMeter("Train Loss")
+    aggregatePredictionLoss = AverageMeter("Prediction Loss")
+    aggregateWeightL2Loss = AverageMeter("Weight L2 Regularization Loss")
+    aggregateWeightSparsityLoss = AverageMeter("Weight Structured SP loss")
+    aggregateActivationSparsityLoss = AverageMeter("Activation Structure SP loss")
+
+    # TODO: Add forward_hook to extract activation from relevant layers
+    self.apply_hook_activation(self.model)
+
+    #If pruning is enacted, prune the network
+    if self.config.prune is True:
+      custom_prune.pruneNetwork(self.model, clusterSize=self.config.pruneCluster)
+
+    for batchIdx, (data, target) in enumerate(self.trainDataLoader):
+      global globalActivationDict
+      global globalWeightDict
+      batchSize = target.size()[0]
+
+      #Clear the intermediate tensor lists
+      globalActivationDict.clear()
+      globalWeightDict.clear()
+
+      output = self.model(data)
+      #Prediction loss is already averaged over the local batch size
+      predictionLoss = F.cross_entropy(output, target)
+
+      #TODO: If pruning has not been enacted, obtain weight Lasso and L2 regularization loss
+      weightGroupLassoLoss = torch.tensor(0)
+      weightL2Loss = torch.tensor(0)
+      self.extract_weight(self.model)
+      for key, tensor in globalWeightDict.items():
+        weightGroupLassoLoss.add_(custom_prune.calculateChannelGroupLasso(tensor,
+            clusterSize=self.config.pruneCluster))
+        weightL2Loss.add_(tensor.pow(2).sum())
+
+      weightGroupLassoLoss.mul_(self.config.lossWeightL1Lambda)
+      weightL2Loss.mul_(self.config.lossWeightL2Lambda)
+
+      #TODO: Calculate activation regularization loss
+      activationGroupLassoLoss = torch.tensor(0)
+      for _, tensor in globalActivationDict.items():
+        activationGroupLassoLoss.add_(custom_prune.calculateChannelGroupLasso(tensor,
+            clusterSize=self.config.pruneCluster))
+      activationGroupLassoLoss.div_(batchSize)
+      activationGroupLassoLoss.mul_(self.config.lossActivationLambda)
+
+      totalLoss = predictionLoss +\
+                  weightGroupLassoLoss + weightL2Loss + activationGroupLassoLoss
+
+      acc1 = accuracy(output, target, topk=(1,))
+
+      aggregateAccuracyTop1.update(acc1)
+      aggregateLoss.update(totalLoss)
+      aggregateActivationSparsityLoss.update(activationGroupLassoLoss)
+      aggregateWeightSparsityLoss.update(weightGroupLassoLoss)
+      aggregateWeightL2Loss.update(weightL2Loss)
+
+      self.optimizer.zero_grad()
+      totalLoss.backward()
+      self.optimizer.step()
+      # End of training one iteration
+    # End of training one epoch
+
+    # TODO: Log the average accuracy, and various losses over the epoch
+    self.logWriter.add_scalar("train/acc1", aggregateAccuracyTop1.avg, epoch)
+    self.logWriter.add_scalar("train/total_loss", aggregateLoss.avg, epoch)
+    self.logWriter.add_scalar("train/weight_sparsity_loss", aggregateWeightSparsityLoss.avg, epoch)
+    self.logWriter.add_scalar("train/activation_sparsity_loss", aggregateActivationSparsityLoss.avg, epoch)
+    self.logWriter.add_scalar("train/weight_L2_loss", aggregateWeightL2Loss.avg, epoch)
 
   def train(numEpoch):
     """
