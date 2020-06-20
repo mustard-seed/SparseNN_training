@@ -1,5 +1,6 @@
 import quantization.quantization as custom_quant
 import pruning.pruning as custom_prune
+import utils.meters as meters
 
 import torch
 import torch.multiprocessing as mp
@@ -27,47 +28,6 @@ def hook_activation(module, input, output):
 # Global list for storing the weight tensors
 globalWeightDict = {}
 
-def accuracy(output, target, topk=(1,)):
-  """Computes the accuracy over the k top predictions for the specified values of k"""
-  with torch.no_grad():
-    maxk = max(topk)
-    batch_size = target.size(0)
-
-    _, pred = output.topk(maxk, 1, True, True)
-    pred = pred.t()
-    correct = pred.eq(target.view(1, -1).expand_as(pred))
-
-    res = []
-    for k in topk:
-      correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
-      res.append(correct_k.mul_(100.0 / batch_size))
-    return res
-
-
-class AverageMeter(object):
-  """Computes and stores the average and current value"""
-
-  def __init__(self, name, fmt=':f'):
-    self.name = name
-    self.fmt = fmt
-    self.reset()
-
-  def reset(self):
-    self.val = torch.tensor(0.)
-    self.sum = torch.tensor(0.)
-    self.count = torch.tensor(0.)
-
-  def update(self, val):
-    val = hvd.allreduce(val.detach().cpu(), name=self.name)
-    self.val = val
-    self.sum += val
-    self.count += 1
-
-  @property
-  def avg(self):
-    return self.sum / self.count
-
-
 def generate_base_config():
   config = edict()
   config.batchSizePerWorker = 32
@@ -82,6 +42,7 @@ def generate_base_config():
   config.lrStepSize = 4
   config.lrReductionFactor = 0.7
   config.lrMomentum = 0.01
+  config.lrMPAdjustmentWarmUpEpochs = 5
 
   # Loss contribution
   config.lossActivationLambda = 0.0
@@ -163,7 +124,8 @@ class experimentBase():
     self.valDataSet = None
     self.valDataLoader = None
     self.valDataSampler = None
-    self.logWriter = None
+    self.trainMeter = None
+    self.valMeter = None
 
     # Load experiment setting from config file
     config = generate_base_config()
@@ -189,7 +151,7 @@ class experimentBase():
     # Instantiate model
     # Quantize the model if quantization is required
 
-  def adjust_learning_rate(self, epoch):
+  def adjust_learning_rate(self, epoch, batchIdx):
     """
     Compute the learning rate for the current epoch, and
     adjust the learning rate in the optimizer of the experiment
@@ -197,13 +159,20 @@ class experimentBase():
     """
     MININUM_LR = 1e-5
     lr = 1e-5
+    roundedEpoch = epoch + float(batchdIdx + 1) / len(self.trainDataLoader)
     if epoch < self.config.lrWarmupEpochs:
-      lr = (epoch / self.config.lrWarmupEpochs * (self.config.lrPeakBase - self.config.lrInitialBase)) \
+      lr = (roundedEpoch / self.config.lrWarmupEpochs * (self.config.lrPeakBase - self.config.lrInitialBase)) \
            + self.config.lrInitialBase
     else:
       lr = self.config.lrReductionFactor ** ((epoch - self.config.lrWarmupEpochs) // self.config.lrStepSize)
       lr = max(lr, MININUM_LR)
 
+    lrAdj = 1.0
+    if self.multiprocessing is True:
+      if epoch < self.config.lrMPAdjustmentWarmUpEpochs:
+        lrAdj = 1. * (roundedEpoch * (hvd.size() - 1) / self.config.lrMPAdjustmentWarmUpEpochs + 1)
+
+    lr = lr * lrAdj
     for param_group in self.optimizer.param_groups:
       param_group['lr'] = lr
 
@@ -252,10 +221,7 @@ class experimentBase():
     if self.flagFusedQuantized is True:
       assert self.config.configQuantize is True, \
         "Loaded experiment contains quantized model, but the experiment config requires"
-
-    if self.config.configQuantize is True:
-      if self.flagFusedQuantized is True:
-        self.quantize_model()
+      self.quantize_model()
 
     model_dict = self.model.state_dict()
 
@@ -323,17 +289,11 @@ class experimentBase():
     Train the model for one epoch
     :return:
     """
+    self.trainMeter.reset()
     self.model.train()
-    # Shuffle the data set
+    # Shuffle the data set if we are using multiprocessing
     if self.trainSampler is not None:
       self.trainSampler.set_epoch(epoch)
-    # TODO: Initialize loss and accuracy meters
-    aggregateAccuracyTop1 = AverageMeter("Top1 Accuracy")
-    aggregateLoss = AverageMeter("Train Loss")
-    aggregatePredictionLoss = AverageMeter("Prediction Loss")
-    aggregateWeightL2Loss = AverageMeter("Weight L2 Regularization Loss")
-    aggregateWeightSparsityLoss = AverageMeter("Weight Structured SP loss")
-    aggregateActivationSparsityLoss = AverageMeter("Activation Structure SP loss")
 
     # TODO: Add forward_hook to extract activation from relevant layers
     self.apply_hook_activation(self.model)
@@ -345,6 +305,9 @@ class experimentBase():
     for batchIdx, (data, target) in enumerate(self.trainDataLoader):
       global globalActivationDict
       global globalWeightDict
+
+      self.adjust_learning_rate(epoch, batchIdx)
+
       batchSize = target.size()[0]
 
       #Clear the intermediate tensor lists
@@ -378,13 +341,15 @@ class experimentBase():
       totalLoss = predictionLoss +\
                   weightGroupLassoLoss + weightL2Loss + activationGroupLassoLoss
 
-      acc1 = accuracy(output, target, topk=(1,))
-
-      aggregateAccuracyTop1.update(acc1)
-      aggregateLoss.update(totalLoss)
-      aggregateActivationSparsityLoss.update(activationGroupLassoLoss)
-      aggregateWeightSparsityLoss.update(weightGroupLassoLoss)
-      aggregateWeightL2Loss.update(weightL2Loss)
+      self.trainMeter.update(
+        modelOutput=output,
+        targe=target,
+        totalLoss=totalLoss,
+        predictionLoss=predictionLoss,
+        weightL2Loss=weightL2Loss,
+        weightSparsityLoss=weightGroupLassoLoss,
+        activationSparsityLoss=activationGroupLassoLoss
+      )
 
       self.optimizer.zero_grad()
       totalLoss.backward()
@@ -392,21 +357,21 @@ class experimentBase():
       # End of training one iteration
     # End of training one epoch
 
-    # TODO: Log the average accuracy, and various losses over the epoch
-    self.logWriter.add_scalar("train/acc1", aggregateAccuracyTop1.avg, epoch)
-    self.logWriter.add_scalar("train/total_loss", aggregateLoss.avg, epoch)
-    self.logWriter.add_scalar("train/weight_sparsity_loss", aggregateWeightSparsityLoss.avg, epoch)
-    self.logWriter.add_scalar("train/activation_sparsity_loss", aggregateActivationSparsityLoss.avg, epoch)
-    self.logWriter.add_scalar("train/weight_L2_loss", aggregateWeightL2Loss.avg, epoch)
+    # Log the average accuracy, and various losses over the epoch
+    self.trainMeter.log(epoch)
 
-  def train(numEpoch):
+    # Unprune the network
+    if self.config.prune is True:
+      custom_prune.unPruneNetwork(self.model)
+
+  def train(numEpoch : int):
     """
     Train a model for multiple epoch and evaluate on the validation set after every epoch
     :return: None
     """
     pass
 
-  def validate(self):
+  def validate(self, epoch : int):
     """
     Validate the model on the validation set
     :return: None
