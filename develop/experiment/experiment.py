@@ -1,5 +1,6 @@
 import quantization.quantization as custom_quant
 import pruning.pruning as custom_prune
+from pruning.pruning import compute_mask
 
 import torch
 import torch.nn as nn
@@ -464,20 +465,21 @@ class experimentBase(object):
 
         self.remove_hook_activation(forwardHookHandlesDict=fowardHookHandles)
 
-    def evaluate_sparsity(self):
+    def evaluate_sparsity(self) -> (list, list, list):
         """
         Evaluate the activation and weight sparsity of the model on the entire validation set
-        :return: Two lists. One for the average activation sparsity per layer
-                The other for the weight sparsity per layer
-                Another list of the relevant layer name list
+        :return: Three lists. List one for the average activation sparsity per layer
+                List two for the weight sparsity per layer
+                List three the relevant layer name list
         """
+        # List of activation intercept layers
         activationList = []
         def intercept_activation(module, input, output):
             activationList.append(output)
 
         def evaluate_setup (module : torch.nn.Module, prefix=None):
-            interceptHandleDict = {}
-            weightDict = {}
+            interceptHandleList = []
+            weightList = []
             layerNameList = []
 
             for name, m in module.named_children():
@@ -490,48 +492,35 @@ class experimentBase(object):
                                              clusterSize=self.config.pruneCluster,
                                              threshold=self.config.pruneThreshold)
                     interceptHandle = m.register_forward_hook(intercept_activation)
-                    interceptHandleDict[modulePrefix] = interceptHandle
-                    weightDict[modulePrefix] = m.weight.detach().clone()
+                    interceptHandleList.append(interceptHandle)
+                    weightList.append(m.weight.detach().clone())
                     layerNameList.append(modulePrefix)
                 else:
-                    localInterceptHandleDict, localWeightDict, localLayerNameList = \
+                    localInterceptHandleList, localWeightList, localLayerNameList = \
                         evaluate_setup(m, modulePrefix)
 
-                    interceptHandleDict.update(localInterceptHandleDict)
-                    weightDict.update(localWeightDict)
+                    interceptHandleList.extend(localInterceptHandleList)
+                    weightList.extend(localWeightList)
                     layerNameList.extend(localLayerNameList)
 
-            return interceptHandleDict, weightDict, layerNameList
+            return interceptHandleList, weightList, layerNameList
         #End of helper function evaluate_setup
 
-        def apply_filter (t : torch.Tensor, clusterSize, threshold):
-            """
-            Apply cluster filtering on an input tensor
-            :param t:
-            :param clusterSize:
-            :param threshold:
-            :return: The filtered version of tensor t
-            """
-            mask = torch.zeros_like(t, dtype=torch.float)
-            input_dims = t.size()
-            numChannels = input_dims[1]
-            N = input_dims[0]
+        def generate_sparsity_list(tensorList : list):
+            sparsityList = []
+            for idx, tensor in enumerate(tensorList):
+                mask = compute_mask(tensor, self.config.pruneCluster, self.config.pruneThreshold)
 
-            # Make channel the least significant dimension
-            mask_flatten = mask.view(N, numChannels, -1)
+                mask = mask.byte()
+                reference = torch.ones_like(mask)
+                comparison = torch.eq(mask, reference)
+                numNz = torch.sum(comparison.float())
+                sparsity = numNz.item() / comparison.numel()
 
-            # Generate the boolean tensor
-            zeros = torch.zeros_like(t, dtype=torch.float)
-            booleans = torch.isclose(t, zeros, atol=threshold)
-            booleans_flatten = booleans.view(N, numChannels, -1)
-            for c in range(0, numChannels, clusterSize):
-                cEnd = min(c + clusterSize, numChannels)
-                source = torch.cumprod(booleans_flatten[:, c:cEnd, :], dim=1)[:, -1, :].unsqueeze(1)
-                reference = torch.zeros_like(source)
-                mask_flatten[:, c:cEnd, :] = torch.isclose(source, reference)
+                sparsityList.append(sparsity)
 
-            return mask * t
-        # End of helper function apply_filter
+            return sparsityList
+
 
         assert hvd.size() == 1, "Sparsity evaluation cannot be done in multi-processing mode!"
 
@@ -543,15 +532,27 @@ class experimentBase(object):
             torch.quantization.prepare_qat(evaluatedModel, inplace=True)
 
         # Apply pruning mask, and activation interception, extract weight
-        interceptHandleDict, weightDict, layerNameList = \
+        interceptHandleList, weightList, layerNameList = \
             evaluate_setup(evaluatedModel)
+
+        # Compute weight sparsity
+        weightSparsityList = generate_sparsity_list(weightList)
+        activationSparsityList = None
 
         with torch.no_grad():
             for batchIdx, (data, target) in enumerate(self.valDataLoader):
                 activationList.clear()
                 output = evaluatedModel(data)
+                batchActivationSparsityList = np.array(generate_sparsity_list(activationList))
+                if activationSparsityList is None:
+                    activationSparsityList = np.zeros_like(batchActivationSparsityList)
 
-        # TODO : WIP
+                np.add(x1=batchActivationSparsityList, x2=activationSparsityList, out=activationSparsityList)
+                # End of iteration of all validation data
+            activationSparsityList = activationSparsityList / float(len(self.valDataLoader))
+
+        return activationSparsityList, weightSparsityList, layerNameList
+        # End of evaluate sparsity
 
 
 

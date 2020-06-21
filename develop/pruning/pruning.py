@@ -5,6 +5,28 @@ import torch.nn.utils.prune as prune
 import custom_modules.custom_modules as modules
 
 
+def compute_mask(inputTensor : torch.Tensor, clusterSize : int, threshold : float) -> torch.Tensor:
+    mask = torch.zeros_like(inputTensor, dtype=torch.float)
+    input_dims = inputTensor.size()
+    numChannels = input_dims[1]
+    N = input_dims[0]
+
+    # Make channel the least significant dimension
+    # mask_flatten shares the same underlying memory as mask
+    mask_flatten = mask.view(N, numChannels, -1)
+
+    # Generate the boolean tensor
+    zeros = torch.zeros_like(inputTensor, dtype=torch.float)
+    booleans = torch.isclose(inputTensor, zeros, atol=threshold)
+    booleans_flatten = booleans.view(N, numChannels, -1)
+    for c in range(0, numChannels, clusterSize):
+        cEnd = min(c + clusterSize, numChannels)
+        source = torch.cumprod(booleans_flatten[:, c:cEnd, :], dim=1)[:, -1, :].unsqueeze(1)
+        reference = torch.zeros_like(source)
+        mask_flatten[:, c:cEnd, :] = torch.isclose(source, reference)
+
+    return mask
+
 class channelClusterGroupLassoPruningMethod(prune.BasePruningMethod):
     """
       Prune according to the specified cluster size along the channel dimension
@@ -28,24 +50,7 @@ class channelClusterGroupLassoPruningMethod(prune.BasePruningMethod):
           t: input tensor
           default_mask: not used
         """
-        mask = torch.zeros_like(t, dtype=torch.float)
-        input_dims = t.size()
-        numChannels = input_dims[1]
-        N = input_dims[0]
-
-        # Make channel the least significant dimension
-        # mask_flatten shares the same underlying memory as mask
-        mask_flatten = mask.view(N, numChannels, -1)
-
-        # Generate the boolean tensor
-        zeros = torch.zeros_like(t, dtype=torch.float)
-        booleans = torch.isclose(t, zeros, atol=self.threshold)
-        booleans_flatten = booleans.view(N, numChannels, -1)
-        for c in range(0, numChannels, self.clusterSize):
-            cEnd = min(c + self.clusterSize, numChannels)
-            source = torch.cumprod(booleans_flatten[:, c:cEnd, :], dim=1)[:, -1, :].unsqueeze(1)
-            reference = torch.zeros_like(source)
-            mask_flatten[:, c:cEnd, :] = torch.isclose(source, reference)
+        mask = compute_mask(inputTensor=t, clusterSize=self.clusterSize, threshold=self.threshold)
 
         return mask
 
