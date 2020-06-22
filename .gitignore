@@ -10,3 +10,4 @@ env/
 lab
 notebooks/
 .ipynb_checkpoints/
+datasets/
