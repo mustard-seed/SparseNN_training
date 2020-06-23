@@ -26,7 +26,7 @@ globalActivationDict = {}
 # To be exported
 def hook_activation(module, input, output):
     global globalActivationDict
-    globalActivationDict[module] = output.clone().detach()
+    globalActivationDict[module] = output.clone()
 
 
 def remove_hook_activation(forwardHookHandlesDict:dict):
@@ -233,7 +233,7 @@ class experimentBase(object):
         for m in module.children():
             if isinstance(m, (torch.nn.Conv2d, torch.nn.Linear, torch.nn.ConvTranspose2d)):
                 global globalWeightDict
-                globalWeightDict[m] = m.weight.clone().detach()
+                globalWeightDict[m] = m.weight.clone()
             else:
                 self.extract_weight(m)
 

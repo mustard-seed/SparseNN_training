@@ -86,10 +86,11 @@ class BaseMeter(object):
                                       self.aggregateActivationSparsityLoss.avg, epoch)
             self.logWriter.add_scalar(self.logPrefix + '/weight_L2_loss', self.aggregateWeightL2Loss.avg, epoch)
 
-            print('----{prefix}: {epoch}------\n Average total loss: {total_loss:.2f} \n Average prediction loss: {prediction_loss}'.format(
+            print('----{prefix}: {epoch}------\n Average total loss: {total_loss:.2f} \n Average activation loss: {activation_loss:.2f} \n Average prediction loss: {prediction_loss}'.format(
                 prefix = self.logPrefix,
                 epoch = epoch+1,
                 total_loss = self.aggregateLoss.avg,
+                activation_loss = self.aggregateActivationSparsityLoss.avg,
                 prediction_loss = self.aggregatePredictionLoss.avg
             ))
 
