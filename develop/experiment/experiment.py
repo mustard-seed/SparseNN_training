@@ -597,8 +597,8 @@ class experimentBase(object):
 
             return sparsityList
 
-
-        assert hvd.size() == 1, "Sparsity evaluation cannot be done in multi-processing mode!"
+        if self.multiprocessing is True:
+            assert hvd.size() == 1, "Sparsity evaluation cannot be done in multi-processing mode!"
 
         # Fuse and quantized the model if this is haven't been done so
         evaluatedModel = copy.deepcopy(self.model)
