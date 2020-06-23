@@ -13,8 +13,6 @@
 #PBS -l place=excl
 ###Name to appear on the job list
 #PBS -N qsub_train
-###Sends email on job abort, begin, and end
-#PBS -m abe
 
 ### Load the modules
 module load gnu8
