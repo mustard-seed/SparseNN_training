@@ -15,6 +15,7 @@ import numpy as np
 import os
 import math
 import copy
+import csv
 
 # Make sure to import the global the following globals
 # Global list for storing the intermediate activation layers
@@ -629,12 +630,31 @@ class experimentBase(object):
                 if activationSparsityList is None:
                     activationSparsityList = np.zeros_like(batchActivationSparsityList)
 
-                np.add(x1=batchActivationSparsityList, x2=activationSparsityList, out=activationSparsityList)
+                activationSparsityList = np.add(batchActivationSparsityList, activationSparsityList)
                 # End of iteration of all validation data
             activationSparsityList = activationSparsityList / float(len(self.valDataLoader))
 
         return activationSparsityList, weightSparsityList, layerNameList
         # End of evaluate sparsity
+
+    def save_sparsity_stats(self):
+        activationSparsityList, weightSparsityList, layerNameList = self.evaluate_sparsity()
+        filepath = os.path.join(self.config.logDir, 'sparsity_stats.csv')
+        with open(filepath, 'w', newline='') as csvfile:
+            fieldnames = ['Layer_Name', 'Weight_Sparsity', 'Activation_Sparsity']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+            writer.writeheader()
+            for idx, layerName in enumerate(layerNameList):
+                activationSparsity = activationSparsityList[idx]
+                weightSparsity= weightSparsityList[idx]
+
+                rowDict = {'Layer_Name' : layerName,
+                           'Weight_Sparsity': weightSparsity,
+                           'Activation_Sparsity' : activationSparsity}
+                writer.writerow(rowDict)
+
+
 
 
 

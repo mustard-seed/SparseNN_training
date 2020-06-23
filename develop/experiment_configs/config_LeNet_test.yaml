@@ -3,7 +3,7 @@
 # Iterations, etc
 numEpochToTrain: 10
 batchSizePerWorker: 64
-numThreadsPerWorker: 16
+numThreadsPerWorker: 28
 
 # Learning rates
 lrInitialBase: 0.01
@@ -25,7 +25,7 @@ lossWeightL2Lambda: 0.002
 # Pruning paramters
 prune: False
 pruneCluster: 1
-pruneThreshold: 0.00005
+pruneThreshold: 0.005
 quantize: False
 
 # See

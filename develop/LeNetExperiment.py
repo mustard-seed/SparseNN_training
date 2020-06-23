@@ -154,6 +154,8 @@ class experimentLeNet(experimentBase):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="LeNet experiment")
+    parser.add_argument('--mode', type=str, choices=['train', 'evaluate_sparsity'], default='train',
+                        help='Mode. Valid choices are train, and evaluate_sparsity')
     parser.add_argument('--config_file', type=str, required=True,
                         help='Path to the experiment configuration file. Required')
     parser.add_argument('--load_checkpoint', type=int, choices=[0, 1, 2], default=0,
@@ -174,5 +176,7 @@ if __name__ == '__main__':
         experiment.restore_experiment_from_checkpoint(checkpoint=args.checkpoint_path,
                                                       loadModelOnly=loadModelOnly)
 
-    experiment.train()
-
+    if args.mode == 'train':
+        experiment.train()
+    elif args.mode == 'evaluate_sparsity':
+        experiment.save_sparsity_stats()
