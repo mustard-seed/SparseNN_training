@@ -21,7 +21,7 @@ lossWeightL2Lambda: 0.002
 
 # Pruning paramters
 prune: False
-pruneCluster: 4
+pruneCluster: 1
 pruneThreshold: 0.00005
 quantize: False
 

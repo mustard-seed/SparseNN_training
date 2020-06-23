@@ -125,6 +125,7 @@ def unPruneNetwork(net):
 
 
 ###Regularization contribution calculation#####
+# TODO: Make this run faster
 def calculateChannelGroupLasso(input: torch.Tensor, clusterSize=2) -> torch.Tensor:
     """
         Compute the group lasso according to the block size along channels
@@ -140,9 +141,12 @@ def calculateChannelGroupLasso(input: torch.Tensor, clusterSize=2) -> torch.Tens
     numChunks = (numChannels - 1) // clusterSize + 1
     eps = 1e-16
 
-    for chunk in list(torch.chunk(input=input, chunks=numChunks, dim=1)):
-        squared = torch.pow(chunk, 2.0)
-        square_summed = torch.sum(squared, 1, keepdim=False)
-        sqrt = torch.pow(square_summed.add_(torch.tensor(eps)), 0.5)
+    squared = torch.pow(input, 2.0)
+
+    # TODO: The more chunks there are, the slower this gets.... Fix this!
+    # Each chunk is a view of the original tensor, so there is no copy overhead
+    for chunk in list(torch.chunk(input=squared, chunks=numChunks, dim=1)):
+        square_summed = torch.sum(chunk, 1, keepdim=False)
+        sqrt = square_summed.add_(torch.tensor(eps)).pow_(0.5)
         accumulate.add_(torch.sum(sqrt))
     return accumulate
