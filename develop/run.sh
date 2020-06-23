@@ -12,11 +12,9 @@
 ###Request exclusive placement on the node
 #PBS -l place=excl
 ###Name to appear on the job list
-#PBS -N qsub_make
+#PBS -N qsub_train
 ###Sends email on job abort, begin, and end
 #PBS -m abe
-###Specify the email address
-#PBS -M james2006roger@yahoo.ca
 
 ### Load the modules
 module load gnu8
@@ -24,7 +22,7 @@ module load openmpi3
 #source /opt/intel/compilers_and_libraries_2018.0.128/linux/mpi/intel64/bin/mpivars.sh
 
 ###CD to the working directory
-cd $PBS_O_WORKDIR || exit
+cd "$PBS_O_WORKDIR"
 
 ###Obtain number of cores per socket
 export num_core_per_socket=$(lscpu | grep "Core(s) per socket:" | awk '{print $4}')
@@ -51,6 +49,15 @@ export HOROVOD_TIMELINE_MARK_CYCLES=0
 export HOROVOD_FUSION_THRESHOLD=134217728
 
 source activate /homes/jmusel/jmuse/SparseNN_training/env
+
+echo "PBS Job Number      " $(echo $PBS_JOBID | sed 's/\..*//')
+echo "PBS batch run on    " $(hostname)
+echo "Time it was started " $(date +%F_%T)
+echo "Current Directory   " $(pwd)
+echo "Submitted work dir  " $PBS_O_WORKDIR
+echo "Number of Nodes     " $PBS_NP
+echo "Nodefile List       " $PBS_NODEFILE
+
 ### Execute on multinode. One process per socket, and bind each process to all the cores on the socket
 ### See https://stackoverflow.com/questions/28216897/syntax-of-the-map-by-option-in-openmpi-mpirun-v1-8
 ### mpiexec won't work 
@@ -58,7 +65,8 @@ time mpirun -x LD_LIBRARY_PATH \
     -x OMP_NUM_THREADS \
     -x PATH \
     --map-by ppr:1:socket:pe=$num_core_per_socket --report-bindings \
-    --oversubscribe -n $num_proc "$@"
+    --oversubscribe -n $num_proc \
+    python LeNetExperiment.py --mode train --config experiment_configs/config_LeNet_test.yaml --multiprocessing | tee output.txt
 # time mpirun -x LD_LIBRARY_PATH \
 #     -x OMP_NUM_THREADS \
 #     -x PATH -x I_MPI_FABRICS \
