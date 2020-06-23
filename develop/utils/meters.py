@@ -86,6 +86,13 @@ class BaseMeter(object):
                                       self.aggregateActivationSparsityLoss.avg, epoch)
             self.logWriter.add_scalar(self.logPrefix + '/weight_L2_loss', self.aggregateWeightL2Loss.avg, epoch)
 
+            print('----{prefix}: {epoch}------\n Average total loss: {total_loss:.2f} \n Average prediction loss: {prediction_loss}'.format(
+                prefix = self.logPrefix,
+                epoch = epoch+1,
+                total_loss = self.aggregateLoss.avg,
+                prediction_loss = self.aggregatePredictionLoss.avg
+            ))
+
 
 class ClassificationMeter(BaseMeter):
     def __init__(self, multiprocessing: bool = False, logWriter=None, logPrefix=''):
@@ -113,5 +120,6 @@ class ClassificationMeter(BaseMeter):
 
     def log(self, epoch):
         if self.logWriter:
-            self.logWriter.add_scalar(self.logPrefix + '/acc1', self.aggregateAccuracyTop1.avg, epoch)
             super().log(epoch)
+            self.logWriter.add_scalar(self.logPrefix + '/acc1', self.aggregateAccuracyTop1.avg, epoch)
+            print('top-1 prediction accuracy: {:2f}%\n'.format(self.aggregateAccuracyTop1.avg))

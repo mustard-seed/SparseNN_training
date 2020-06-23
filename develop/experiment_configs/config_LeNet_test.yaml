@@ -15,6 +15,9 @@ lrMomentum: 0.5
 lrMPAdjustmentWarmUpEpochs: 5
 
 # Loss contribution
+enableLossActivation: False
+enableLossWeightL1: False
+enableLossWeightL2: False
 lossActivationLambda: 0.002
 lossWeightL1Lambda: 0.002
 lossWeightL2Lambda: 0.002

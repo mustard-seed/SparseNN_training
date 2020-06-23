@@ -62,6 +62,9 @@ def generate_base_config():
     config.lrMPAdjustmentWarmUpEpochs = 5
 
     # Loss contribution
+    config.enableLossActivation = False
+    config.enableLossWeightL1 = False
+    config.enableLossWeightL2 = False
     config.lossActivationLambda = 0.0
     config.lossWeightL1Lambda = 0.0
     config.lossWeightL2Lambda = 0.0
@@ -423,23 +426,28 @@ class experimentBase(object):
         weightL2Loss = torch.tensor(0.0)
 
         self.extract_weight(self.model)
-        for key, tensor in globalWeightDict.items():
-            weightGroupLassoLoss.add_(custom_prune.calculateChannelGroupLasso(tensor,
-                                                                              clusterSize=self.config.pruneCluster))
-            weightL2Loss.add_(tensor.pow(2.0).sum())
-
-        weightGroupLassoLoss.mul_(self.config.lossWeightL1Lambda)
-        weightL2Loss.mul_(self.config.lossWeightL2Lambda)
-
-        # TODO: Calculate activation regularization loss
-        activationGroupLassoLoss = torch.tensor(0.0)
-        for _, tensor in globalActivationDict.items():
-            activationGroupLassoLoss.add_(custom_prune.calculateChannelGroupLasso(tensor,
+        if self.config.enableLossWeightL1:
+            for key, tensor in globalWeightDict.items():
+                weightGroupLassoLoss.add_(custom_prune.calculateChannelGroupLasso(tensor,
                                                                                   clusterSize=self.config.pruneCluster))
-        activationGroupLassoLoss.div_(batchSize)
-        activationGroupLassoLoss.mul_(self.config.lossActivationLambda)
-        # print('predictionLoss: ', predictionLoss)
-        # print('activationGroupLassoLoss ', activationGroupLassoLoss)
+            weightGroupLassoLoss.mul_(self.config.lossWeightL1Lambda)
+
+        if self.config.enableLossWeightL2:
+            for key, tensor in globalWeightDict.items():
+                weightGroupLassoLoss.add_(custom_prune.calculateChannelGroupLasso(tensor,
+                                                                                  clusterSize=self.config.pruneCluster))
+                weightL2Loss.add_(tensor.pow(2.0).sum())
+            weightL2Loss.mul_(self.config.lossWeightL2Lambda)
+
+        activationGroupLassoLoss = torch.tensor(0.0)
+
+        if self.config.enableLossActivation:
+            for _, tensor in globalActivationDict.items():
+                activationGroupLassoLoss.add_(custom_prune.calculateChannelGroupLasso(tensor,
+                                                                                      clusterSize=self.config.pruneCluster))
+            activationGroupLassoLoss.div_(batchSize)
+            activationGroupLassoLoss.mul_(self.config.lossActivationLambda)
+
         totalLoss = predictionLoss + \
                     weightGroupLassoLoss + weightL2Loss + activationGroupLassoLoss
 
@@ -509,9 +517,7 @@ class experimentBase(object):
 
         resumeFromEpoch = self.experimentStatus.numEpochTrained
         for epoch in range(resumeFromEpoch, self.config.numEpochToTrain):
-            print('Epoch {}, train'.format(epoch + 1))
             self.train_one_epoch(optimizer, epoch)
-            print('Epoch {}, validate'.format(epoch + 1))
             self.validate(epoch)
             # TODO: save the checkpoint
             self.save_experiment_to_checkpoint(optimizer, self.config.checkpointSaveDir)
