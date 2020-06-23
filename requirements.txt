@@ -1,4 +1,4 @@
 horovod==0.19.*
-
+tensorboard==2.2.2
 # make sure horovod is re-compiled if environment is re-built
 --no-binary=horovod

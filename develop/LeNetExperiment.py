@@ -7,6 +7,10 @@ import horovod.torch as hvd
 from torchvision import datasets, transforms
 import torch.utils.data.distributed as distributed
 from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
+
+
+import argparse
 
 
 from custom_modules.custom_modules import ConvBNReLU, LinearReLU, ConvReLU
@@ -54,7 +58,7 @@ class LeNet(nn.Module):
         x = self.fc2(x)
         x = self.fc3(x)
         x = self.deQuant(x)
-        return x
+        return F.log_softmax(x)
 
     # Fuse convBNReLU prior to quantization
     def fuse_model(self):
@@ -72,7 +76,7 @@ class experimentLeNet(experimentBase):
         self.model = LeNet()
 
         # Dataset rootdir relative to the python script
-        datasetDir = 'datasets'
+        datasetDir = self.config.dataTrainDir
         transform = transforms.Compose([
                                         transforms.ToTensor(),
                                         transforms.Normalize((0.1307,), (0.3081,))
@@ -105,16 +109,19 @@ class experimentLeNet(experimentBase):
             shuffle=True if self.valDataSampler is None else False
         )
 
+        if (multiprocessing is True and hvd.rank() == 0) or multiprocessing is False:
+            self.logWriter = SummaryWriter(self.config.logDir)
+
         self.trainMeter = ClassificationMeter(
             multiprocessing,
-            logDir = self.config.logDir,
+            self.logWriter,
             logPrefix='Train'
         )
 
         self.valMeter = ClassificationMeter(
             multiprocessing,
-            logDir=self.config.logDir,
-            logPrefix='Train'
+            self.logWriter,
+            logPrefix='Validation'
         )
 
         # End of __init__
@@ -145,5 +152,27 @@ class experimentLeNet(experimentBase):
                                                    clusterSize=self.config.pruneCluster,
                                                    threshold=self.config.pruneThreshold)
 
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="LeNet experiment")
+    parser.add_argument('--config_file', type=str, required=True,
+                        help='Path to the experiment configuration file. Required')
+    parser.add_argument('--load_checkpoint', type=int, choices=[0, 1, 2], default=0,
+                        help='Load experiment from checkpoint. Default: 0. 0: start from scratch; 1: load full experiment; 2: load model only')
+    parser.add_argument('--multiprocessing', action='store_true',
+                        help='Enable multiprocessing (using Horovod as backend). Default: False')
+    parser.add_argument('--checkpoint_path', type=str,
+                        help='Path to the checkpoint to be loaded. Required if --load_checkpoint is set as 1 or 2')
 
+    args = parser.parse_args()
+    if args.multiprocessing is True:
+        hvd.init()
+    experiment = experimentLeNet(configFile=args.config_file,
+                                 multiprocessing=args.multiprocessing)
+    if args.load_checkpoint == 1 or args.load_checkpoint == 2:
+        assert args.checkpoint_path is not None, 'Experiment is required to load from an existing checkpoint, but no path to checkpoint is provided!'
+        loadModelOnly = True if args.load_checkpoint == 2 else False
+        experiment.restore_experiment_from_checkpoint(checkpoint=args.checkpoint_path,
+                                                      loadModelOnly=loadModelOnly)
+
+    experiment.train()
 

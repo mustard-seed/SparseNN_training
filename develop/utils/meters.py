@@ -16,16 +16,17 @@ def accuracy(output, target, topk=(1,)):
         res = []
         for k in topk:
             correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
-            res.append(correct_k.mul_(100.0 / batch_size))
+            res.append(correct_k.mul_(100.0 / batch_size).squeeze())
         return res
 
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
 
-    def __init__(self, name, fmt=':f'):
+    def __init__(self, name, multiprocessing=False, fmt=':f'):
         self.name = name
         self.fmt = fmt
+        self.mp = multiprocessing
         self.reset()
 
     def reset(self):
@@ -34,7 +35,8 @@ class AverageMeter(object):
         self.count = torch.tensor(0.)
 
     def update(self, val):
-        val = hvd.allreduce(val.detach().cpu(), name=self.name)
+        if self.mp is True:
+            val = hvd.allreduce(val.detach().cpu(), name=self.name)
         self.val = val
         self.sum += val
         self.count += 1
@@ -45,16 +47,15 @@ class AverageMeter(object):
 
 
 class BaseMeter(object):
-    def __init__(self, flagUseMultiProcessing: bool = False, logDir='', logPrefix=''):
+    def __init__(self, multiprocessing: bool = False, logWriter=None, logPrefix=''):
         self.logPrefix = logPrefix
         self.logWriter = None
-        if (flagUseMultiProcessing is True and hvd.rank() == 0) or flagUseMultiProcessing is False:
-            self.logWriter = SummaryWriter(logDir)
-        self.aggregateLoss = AverageMeter(logPrefix + '/Loss')
-        self.aggregatePredictionLoss = AverageMeter(logPrefix + '/Prediction Loss')
-        self.aggregateWeightL2Loss = AverageMeter(logPrefix + '/Weight L2 Regularization Loss')
-        self.aggregateWeightSparsityLoss = AverageMeter(logPrefix + '/Weight Structured SP loss')
-        self.aggregateActivationSparsityLoss = AverageMeter(logPrefix + '/Activation Structure SP loss')
+        self.logWriter = logWriter
+        self.aggregateLoss = AverageMeter(logPrefix + '/Loss', multiprocessing)
+        self.aggregatePredictionLoss = AverageMeter(logPrefix + '/Prediction Loss', multiprocessing=multiprocessing)
+        self.aggregateWeightL2Loss = AverageMeter(logPrefix + '/Weight L2 Regularization Loss', multiprocessing=multiprocessing)
+        self.aggregateWeightSparsityLoss = AverageMeter(logPrefix + '/Weight Structured SP loss', multiprocessing=multiprocessing)
+        self.aggregateActivationSparsityLoss = AverageMeter(logPrefix + '/Activation Structure SP loss', multiprocessing=multiprocessing)
 
     def reset(self) -> None:
         self.aggregateLoss.reset()
@@ -87,9 +88,9 @@ class BaseMeter(object):
 
 
 class ClassificationMeter(BaseMeter):
-    def __init__(self, flagUseMultiProcessing: bool = False, logDir='', logPrefix=''):
-        super().__init__(flagUseMultiProcessing, logDir, logPrefix)
-        self.aggregateAccuracyTop1 = AverageMeter('Top1 Accuracy')
+    def __init__(self, multiprocessing: bool = False, logWriter=None, logPrefix=''):
+        super().__init__(multiprocessing, logWriter, logPrefix)
+        self.aggregateAccuracyTop1 = AverageMeter('Top1 Accuracy', multiprocessing=multiprocessing)
 
     def reset(self) -> None:
         super().reset()
@@ -107,8 +108,8 @@ class ClassificationMeter(BaseMeter):
                        predictionLoss, weightL2Loss,
                        weightSparsityLoss, activationSparsityLoss)
 
-        acc1 = accuracy(modelOutput, target, topk=(1,))
-        self.aggregateAccuracyTop1.update(acc1)
+        accList = accuracy(modelOutput, target, topk=(1,))
+        self.aggregateAccuracyTop1.update(accList[0])
 
     def log(self, epoch):
         if self.logWriter:

@@ -80,8 +80,6 @@ def generate_base_config():
     config.dataValDir = './'
 
     # Checkpoints
-    config.loadCheckpoint = ''
-    config.checkpointLoadPath = ''
     config.checkpointSaveDir = ''
     config.checkpointSaveFileNameFormat = ''
 
@@ -155,6 +153,7 @@ class experimentBase(object):
         self.valDataSet = None
         self.valDataLoader = None
         self.valDataSampler = None
+        self.logWriter = None
         self.trainMeter = None
         self.valMeter = None
 
@@ -192,7 +191,7 @@ class experimentBase(object):
         :param target: The ground truth
         :return: The loss
         """
-        return torch.tensor(0)
+        return torch.tensor(0.)
 
     @abstractmethod
     def apply_hook_activation(self, module: torch.nn.Module, prefix=None) -> dict:
@@ -337,7 +336,7 @@ class experimentBase(object):
         # 3. Load the new state dicc
         self.model.load_state_dict(saved_model_dict)
 
-    def restore_experiment_from_checkpoint(self, checkpoint):
+    def restore_experiment_from_checkpoint(self, checkpoint, loadModelOnly=False):
         """
         Restores an experiment stats, optimizer, and model from checkpoint
         When restoring a model, look for the status flag 'quantized'
@@ -356,26 +355,28 @@ class experimentBase(object):
         else:
             state_dict = torch.load(checkpoint)
 
-        self.experimentStatus = state_dict['experimentStatus']
-        self.config = state_dict['experimentConfig']
+        experimentStatus = state_dict['experimentStatus']
+        config = state_dict['experimentConfig']
+        if loadModelOnly is False:
+            self.experimentStatus = experimentStatus
+            self.config = config
+            # Save the optimizer state
+            self.optimizerStateDict = state_dict['optimizer']
 
         # Load the model
         # Check for whether it makes sense to load a quantized experiment
         # If so, quantize the model before proceed with loading
-        if self.experimentStatus.flagFusedQuantized is True:
+        if experimentStatus.flagFusedQuantized is True:
             assert self.config.quantize is True, \
                 'Loaded experiment contains quantized model, but the experiment config does not require quantization'
             self.quantize_model()
 
-        if self.experimentStatus.flagPruned is True:
+        if experimentStatus.flagPruned is True:
             assert self.config.prune is True, \
                 'Loaded experiment contains pruned model, but the experiment config does not require pruning'
             self.prune_network()
 
         self.restore_model_from_state_dict(state_dict['model'])
-
-        # Save the optimizer state
-        self.optimizerStateDict = state_dict['optimizer']
 
     def save_experiment_to_checkpoint(self, optimizer, filePath):
         """
@@ -418,33 +419,34 @@ class experimentBase(object):
         predictionLoss = self.evaluate_loss(output, target)
 
         # If pruning has not been enacted, obtain weight Lasso and L2 regularization loss
-        weightGroupLassoLoss = torch.tensor(0)
-        weightL2Loss = torch.tensor(0)
+        weightGroupLassoLoss = torch.tensor(0.0)
+        weightL2Loss = torch.tensor(0.0)
 
         self.extract_weight(self.model)
         for key, tensor in globalWeightDict.items():
             weightGroupLassoLoss.add_(custom_prune.calculateChannelGroupLasso(tensor,
                                                                               clusterSize=self.config.pruneCluster))
-            weightL2Loss.add_(tensor.pow(2).sum())
+            weightL2Loss.add_(tensor.pow(2.0).sum())
 
         weightGroupLassoLoss.mul_(self.config.lossWeightL1Lambda)
         weightL2Loss.mul_(self.config.lossWeightL2Lambda)
 
         # TODO: Calculate activation regularization loss
-        activationGroupLassoLoss = torch.tensor(0)
+        activationGroupLassoLoss = torch.tensor(0.0)
         for _, tensor in globalActivationDict.items():
             activationGroupLassoLoss.add_(custom_prune.calculateChannelGroupLasso(tensor,
                                                                                   clusterSize=self.config.pruneCluster))
         activationGroupLassoLoss.div_(batchSize)
         activationGroupLassoLoss.mul_(self.config.lossActivationLambda)
-
+        # print('predictionLoss: ', predictionLoss)
+        # print('activationGroupLassoLoss ', activationGroupLassoLoss)
         totalLoss = predictionLoss + \
                     weightGroupLassoLoss + weightL2Loss + activationGroupLassoLoss
 
-        meter = self.trainMeter if isTrain else self.valMeter
+        meter = self.trainMeter if isTrain is True else self.valMeter
         meter.update(
             modelOutput=output,
-            targe=target,
+            target=target,
             totalLoss=totalLoss,
             predictionLoss=predictionLoss,
             weightL2Loss=weightL2Loss,
@@ -475,11 +477,10 @@ class experimentBase(object):
             self.trainDataSampler.set_epoch(epoch)
 
         for batchIdx, (data, target) in enumerate(self.trainDataLoader):
-            self.adjust_learning_rate(epoch, batchIdx)
-
-            totalLoss = self.evaluate(data, target, isTrain=True)
-
+            self.adjust_learning_rate(epoch, batchIdx, optimizer)
             optimizer.zero_grad()
+            totalLoss = self.evaluate(data, target, isTrain=True)
+            # print('totalLoss: ', totalLoss)
             totalLoss.backward()
             optimizer.step()
             # End of training one iteration
@@ -508,10 +509,12 @@ class experimentBase(object):
 
         resumeFromEpoch = self.experimentStatus.numEpochTrained
         for epoch in range(resumeFromEpoch, self.config.numEpochToTrain):
-            self.train_one_epoch(epoch)
+            print('Epoch {}, train'.format(epoch + 1))
+            self.train_one_epoch(optimizer, epoch)
+            print('Epoch {}, validate'.format(epoch + 1))
             self.validate(epoch)
             # TODO: save the checkpoint
-            self.save_experiment_to_checkpoint(self.config.checkpointSaveDir)
+            self.save_experiment_to_checkpoint(optimizer, self.config.checkpointSaveDir)
 
             #Update statistics
             self.experimentStatus.numEpochTrained += 1
