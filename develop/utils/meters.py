@@ -124,3 +124,33 @@ class ClassificationMeter(BaseMeter):
             super().log(epoch)
             self.logWriter.add_scalar(self.logPrefix + '/acc1', self.aggregateAccuracyTop1.avg, epoch)
             print('top-1 prediction accuracy: {:2f}%\n'.format(self.aggregateAccuracyTop1.avg))
+
+class TimeMeter(object):
+    def __init__(self, multiprocessing: bool = False, logWriter=None, logPrefix=''):
+        self.logPrefix = logPrefix
+        self.logWriter = logWriter
+        self.dataLoadingTime = AverageMeter(logPrefix + '/DataLoadingTime', multiprocessing)
+        self.batchTime = AverageMeter(logPrefix + '/BatchTime', multiprocessing=multiprocessing)
+
+    def reset(self) -> None:
+        self.dataLoadingTime.reset()
+        self.batchTime.reset()
+
+    def update(self,
+               dataLoadingTime,
+               batchTime
+               ) -> None:
+        self.dataLoadingTime.update(dataLoadingTime)
+        self.batchTime.update(batchTime)
+
+    def log(self, epoch):
+        if self.logWriter:
+            self.logWriter.add_scalar(self.logPrefix + '/average_batch_load_time', self.dataLoadingTime.avg, epoch)
+            self.logWriter.add_scalar(self.logPrefix + '/average_batch_train_time', self.batchTime.avg, epoch)
+
+            print('Average batch loading time (s): {load_time:.5f} \n Average batch training time (s): {train_time:.5f} \n'.format(
+                prefix = self.logPrefix,
+                epoch = epoch+1,
+                load_time = self.dataLoadingTime.avg,
+                train_time = self.batchTime.avg
+            ))

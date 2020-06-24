@@ -1,6 +1,7 @@
 import quantization.quantization as custom_quant
 import pruning.pruning as custom_prune
 from pruning.pruning import compute_mask
+from utils.meters import TimeMeter
 
 import torch
 import torch.nn as nn
@@ -17,6 +18,7 @@ import os
 import math
 import copy
 import csv
+import time
 
 # Make sure to import the global the following globals
 # Global list for storing the intermediate activation layers
@@ -163,6 +165,7 @@ class experimentBase(object):
         self.logWriter = None
         self.trainMeter = None
         self.valMeter = None
+        self.trainTimeMeter = None
 
         # Load experiment setting from config file
         config = generate_base_config()
@@ -490,18 +493,25 @@ class experimentBase(object):
         if self.trainDataSampler is not None:
             self.trainDataSampler.set_epoch(epoch)
 
+        end = time.time()
         for batchIdx, (data, target) in enumerate(self.trainDataLoader):
+            dataLoadingTime = (time.time() - end)
             self.adjust_learning_rate(epoch, batchIdx, optimizer)
             optimizer.zero_grad()
             totalLoss = self.evaluate(data, target, isTrain=True)
             # print('totalLoss: ', totalLoss)
             totalLoss.backward()
             optimizer.step()
+
+            batchTime = (time.time() - end)
+            end = time.time()
+            self.trainTimeMeter.update(dataLoadingTime=torch.tensor(dataLoadingTime), batchTime=torch.tensor(batchTime))
             # End of training one iteration
         # End of training one epoch
 
         # Log the average accuracy, and various losses over the epoch
         self.trainMeter.log(epoch)
+        self.trainTimeMeter.log(epoch)
 
         # Remove the activation intercept hooks
         remove_hook_activation(forwardHookHandlesDict=fowardHookHandles)

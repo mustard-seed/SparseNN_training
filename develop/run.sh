@@ -64,7 +64,7 @@ time mpirun -x LD_LIBRARY_PATH \
     -x PATH \
     --map-by ppr:1:socket:pe=$num_core_per_socket --report-bindings \
     --oversubscribe -n $num_proc \
-    python LeNetExperiment.py --mode train --config experiment_configs/config_LeNet_test.yaml --multiprocessing | tee output.txt
+    python LeNetExperiment.py --mode train --config experiment_configs/config_LeNet5_baseline.yaml --multiprocessing | tee output.txt
 # time mpirun -x LD_LIBRARY_PATH \
 #     -x OMP_NUM_THREADS \
 #     -x PATH -x I_MPI_FABRICS \

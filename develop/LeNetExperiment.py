@@ -6,6 +6,7 @@ import torch.optim as optim
 import horovod.torch as hvd
 from torchvision import datasets, transforms
 import torch.utils.data.distributed as distributed
+import torch.multiprocessing as mp
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
@@ -17,7 +18,7 @@ import os
 from custom_modules.custom_modules import ConvBNReLU, LinearReLU, ConvReLU
 import pruning.pruning as custom_pruning
 import experiment.experiment as experiment
-from utils.meters import ClassificationMeter
+from utils.meters import ClassificationMeter, TimeMeter
 from experiment.experiment import experimentBase, globalActivationDict, globalWeightDict, hook_activation
 
 
@@ -77,6 +78,13 @@ class experimentLeNet(experimentBase):
         self.model = LeNet()
 
         # Dataset rootdir relative to the python script
+        # dataKwargs = {'num_workers': 1, 'pin_memory': True}
+        # When supported, use 'forkserver' to spawn dataloader workers instead of 'fork' to prevent
+        # issues with Infiniband implementations that are not fork-safe
+        # if (dataKwargs.get('num_workers', 0) > 0 and hasattr(mp, '_supports_context') and
+        #     mp._supports_context and 'forkserver' in mp.get_all_start_methods()):
+        #     dataKwargs['multiprocessing_context'] = 'forkserver'
+
         datasetDir = self.config.dataTrainDir
         transform = transforms.Compose([
                                         transforms.ToTensor(),
@@ -94,6 +102,7 @@ class experimentLeNet(experimentBase):
             batch_size=self.config.batchSizePerWorker,
             sampler=self.trainDataSampler,
             shuffle=True if self.trainDataSampler is None else False
+            #,**dataKwargs
         )
         self.valDataSet = datasets.MNIST(datasetDir, train=False, download=False,
                                            transform=transform)
@@ -108,6 +117,7 @@ class experimentLeNet(experimentBase):
             batch_size=self.config.batchSizePerWorker,
             sampler=self.valDataSampler,
             shuffle=True if self.valDataSampler is None else False
+            #,**dataKwargs
         )
 
         if (multiprocessing is True and hvd.rank() == 0) or multiprocessing is False:
@@ -125,6 +135,12 @@ class experimentLeNet(experimentBase):
             multiprocessing,
             self.logWriter,
             logPrefix='Validation'
+        )
+
+        self.trainTimeMeter = TimeMeter(
+            multiprocessing,
+            self.logWriter,
+            logPrefix='Train'
         )
 
         # End of __init__
