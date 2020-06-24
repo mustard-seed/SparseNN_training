@@ -1,18 +1,18 @@
 # YAML file parsers treats scientific notaiton as strings
 
 # Iterations, etc
-numEpochToTrain: 10
+numEpochToTrain: 100
 batchSizePerWorker: 64
 numThreadsPerWorker: 28
 
 # Learning rates
-lrInitialBase: 0.01
+lrInitialBase: 0.001
 lrPeakBase: 0.01
-lrWarmupEpochs: 1
+lrWarmupEpochs: 5
 lrStepSize: 10
-lrReductionFactor: 0.7
+lrReductionFactor: 0.9
 lrMomentum: 0.5
-lrMPAdjustmentWarmUpEpochs: 5
+lrMPAdjustmentWarmUpEpochs: 0
 
 # Loss contribution
 enableLossActivation: False
@@ -38,8 +38,8 @@ dataTrainDir: 'datasets'
 dataValDir: 'datasets'
 
 # Checkpoints
-checkpointSaveDir: 'experiment_logs/lenet_test_ckpt'
-checkpointSaveFileNameFormat: 'ckpt_LeNet_test_epoch{}.pth.tar'
+checkpointSaveDir: 'experiment_logs/LeNet5_baseline_ckpt'
+checkpointSaveFileNameFormat: 'ckpt_LeNet5_baseline_epoch{}.pth.tar'
 
 # Log Dir
-logDir: 'experiment_logs/lenet_test_log'
+logDir: 'experiment_logs/LeNet5_baseline_log'
