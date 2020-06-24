@@ -391,6 +391,8 @@ class experimentBase(object):
         """
         if (self.multiprocessing is False) or (self.multiprocessing is True and hvd.rank() == 0):
             filename = self.config.checkpointSaveFileNameFormat.format(self.experimentStatus.numEpochTrained)
+            if not os.path.exists(filePath):
+                os.makedirs(filePath)
             path = os.path.join(filePath, filename)
             state = {
                 'experimentStatus': self.experimentStatus,

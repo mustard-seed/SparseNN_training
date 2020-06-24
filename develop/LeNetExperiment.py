@@ -11,6 +11,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 
 import argparse
+import os
 
 
 from custom_modules.custom_modules import ConvBNReLU, LinearReLU, ConvReLU
@@ -110,6 +111,8 @@ class experimentLeNet(experimentBase):
         )
 
         if (multiprocessing is True and hvd.rank() == 0) or multiprocessing is False:
+            if not os.path.exists(self.config.logDir):
+                os.makedirs(self.config.logDir)
             self.logWriter = SummaryWriter(self.config.logDir)
 
         self.trainMeter = ClassificationMeter(
