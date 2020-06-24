@@ -22,11 +22,13 @@ lossActivationLambda: 0.00002
 lossWeightL1Lambda: 0.00002
 lossWeightL2Lambda: 0.00002
 
-# Pruning paramters
+# Pruning and quantization parameters
 prune: False
 pruneCluster: 1
 pruneThreshold: 0.005
 quantize: False
+numUpdateBNStatsEpochs: 100
+numUpdateQatObserverEpochs: 100
 
 # See
 seed: 47

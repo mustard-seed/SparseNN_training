@@ -5,6 +5,7 @@ from pruning.pruning import compute_mask
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.intrinsic.qat
 import torch.utils.data.distributed
 import horovod.torch as hvd
 import yaml
@@ -75,6 +76,8 @@ def generate_base_config():
     config.pruneCluster = 1
     config.pruneThreshold = 1e-5
     config.quantize = False
+    config.numUpdateBNStatsEpochs = 100
+    config.numUpdateQatObserverEpochs = 100
 
     # See
     config.seed = 47
@@ -520,6 +523,17 @@ class experimentBase(object):
 
         resumeFromEpoch = self.experimentStatus.numEpochTrained
         for epoch in range(resumeFromEpoch, self.config.numEpochToTrain):
+            if self.experimentStatus.flagFusedQuantized is True:
+                if epoch >= self.config.numUpdateQatObserverEpochs:
+                    self.model.apply(torch.quantization.disable_observer)
+                else:
+                    self.model.apply(torch.quantization.enable_observer)
+
+                if epoch >= self.config.numUpdateBNStatsEpochs:
+                    self.model.apply(torch.nn.intrinsic.qat.freeze_bn_stats)
+                else:
+                    self.model.apply(torch.nn.intrinsic.qat.update_bn_stats)
+
             self.train_one_epoch(optimizer, epoch)
             self.validate(epoch)
             # TODO: save the checkpoint
