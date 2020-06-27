@@ -168,7 +168,7 @@ class experimentLeNet(experimentBase):
         pruneList = [self.model.convBN1, self.model.convBN2, self.model.fc1,
                      self.model.fc2, self.model.fc3]
         for m in pruneList:
-            if isinstance(m, (ConvBNReLU, ConvReLU)):
+            if isinstance(m, (ConvBNReLU, ConvReLU, LinearReLU)):
                 layer = list(m.children())[0]
                 custom_pruning.applyClusterPruning(layer,
                                                    "weight",

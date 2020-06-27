@@ -64,8 +64,8 @@ time mpirun -x LD_LIBRARY_PATH \
     -x PATH \
     --map-by ppr:1:socket:pe=$num_core_per_socket --report-bindings \
     --oversubscribe -n $num_proc \
-    python LeNetExperiment.py --mode train --config experiment_configs/config_LeNet5_quantize_cluster4.yaml \
-    --load_checkpoint 2 --checkpoint_path experiment_ckpt/LeNet5_prune_cluster4_ckpt/ckpt_LeNet5_prune_cluster4_epoch19.pth.tar \
+    python LeNetExperiment.py --mode train --config experiment_configs/config_LeNet5_prune_cluster4.yaml \
+    --load_checkpoint 2 --checkpoint_path experiment_logs/LeNet5_sparsify_cluster4_2_log/ckpt_LeNet5_sparsify_cluster4_epoch39.pth.tar \
     --multiprocessing  | tee output.txt
 # time mpirun -x LD_LIBRARY_PATH \
 #     -x OMP_NUM_THREADS \
