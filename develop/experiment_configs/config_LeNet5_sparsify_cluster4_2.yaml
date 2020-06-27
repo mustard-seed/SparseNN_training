@@ -1,30 +1,30 @@
 # YAML file parsers treats scientific notaiton as strings
 
 # Iterations, etc
-numEpochToTrain: 10
+numEpochToTrain: 40
 batchSizePerWorker: 64
 numThreadsPerWorker: 28
 
 # Learning rates
-lrInitialBase: 0.01
-lrPeakBase: 0.01
+lrInitialBase: 0.04
+lrPeakBase: 0.04
 lrWarmupEpochs: 1
 lrStepSize: 10
-lrReductionFactor: 0.7
+lrReductionFactor: 1.0
 lrMomentum: 0.5
-lrMPAdjustmentWarmUpEpochs: 5
+lrMPAdjustmentWarmUpEpochs: 0
 
 # Loss contribution
-enableLossActivation: False
-enableLossWeightL1: False
-enableLossWeightL2: False
-lossActivationLambda: 0.00002
-lossWeightL1Lambda: 0.00002
-lossWeightL2Lambda: 0.00002
+enableLossActivation: True
+enableLossWeightL1: True
+enableLossWeightL2: True
+lossActivationLambda: 0.00004
+lossWeightL1Lambda: 0.002
+lossWeightL2Lambda: 0.002
 
 # Pruning and quantization parameters
 prune: False
-pruneCluster: 1
+pruneCluster: 4
 pruneThreshold: 0.005
 quantize: False
 numUpdateBNStatsEpochs: 100
@@ -38,8 +38,8 @@ dataTrainDir: '/homes/jmusel/jmuse/datasets'
 dataValDir: '/homes/jmusel/jmuse/datasets'
 
 # Checkpoints
-checkpointSaveDir: '/homes/jmusel/jmuse/experiment_ckpt/lenet_test_ckpt'
-checkpointSaveFileNameFormat: 'ckpt_LeNet_test_epoch{}.pth.tar'
+checkpointSaveDir: 'experiment_ckpt/LeNet5_sparsify_cluster4_2_ckpt'
+checkpointSaveFileNameFormat: 'ckpt_LeNet5_sparsify_cluster4_epoch{}.pth.tar'
 
 # Log Dir
-logDir: 'experiment_logs/lenet_test_log'
+logDir: 'experiment_logs/LeNet5_sparsify_cluster4_2_log'

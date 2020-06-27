@@ -13,6 +13,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 import argparse
 import os
+import shutil
 
 
 from custom_modules.custom_modules import ConvBNReLU, LinearReLU, ConvReLU
@@ -149,7 +150,16 @@ class experimentLeNet(experimentBase):
         return F.nll_loss(output, target)
 
     def apply_hook_activation(self, module: torch.nn.Module, prefix=None) -> dict:
-        return super().apply_hook_activation(module, prefix)
+        pruneDict = {'convBN1': self.model.convBN1,
+                     'convBN2': self.model.convBN2,
+                     'convBN3' : self.model.fc1,
+                     'convBN4' : self.model.fc2}
+        forwardHookHandlesDict = {}
+        for name, m in pruneDict.items():
+            handle = m.register_forward_hook(hook_activation)
+            forwardHookHandlesDict[name] = handle
+
+        return forwardHookHandlesDict
 
     def extract_weight(self, module: torch.nn.Module) -> None:
         super().extract_weight(module)
@@ -159,7 +169,7 @@ class experimentLeNet(experimentBase):
                      self.model.fc2, self.model.fc3]
         for m in pruneList:
             if isinstance(m, (ConvBNReLU, ConvReLU)):
-                layer = m.children()[0]
+                layer = list(m.children())[0]
                 custom_pruning.applyClusterPruning(layer,
                                                    "weight",
                                                    clusterSize=self.config.pruneCluster,
@@ -197,5 +207,10 @@ if __name__ == '__main__':
 
     if args.mode == 'train':
         experiment.train()
+        # Copy the config file into the log directory
+        logPath = experiment.config.checkpointSaveDir
+        configFileName = os.path.basename(args.config_file)
+        newConfigFilePath = os.path.join(logPath, configFileName)
+        shutil.copy(args.config_file, newConfigFilePath)
     elif args.mode == 'evaluate_sparsity':
         experiment.save_sparsity_stats()

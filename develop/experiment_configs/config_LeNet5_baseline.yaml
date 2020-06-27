@@ -7,7 +7,7 @@ numThreadsPerWorker: 28
 
 # Learning rates
 lrInitialBase: 0.001
-lrPeakBase: 0.01
+lrPeakBase: 0.04
 lrWarmupEpochs: 5
 lrStepSize: 10
 lrReductionFactor: 0.9
@@ -24,7 +24,7 @@ lossWeightL2Lambda: 0.00002
 
 # Pruning and quantization parameters
 prune: False
-pruneCluster: 1
+pruneCluster: 4
 pruneThreshold: 0.005
 quantize: False
 numUpdateBNStatsEpochs: 100
@@ -34,11 +34,13 @@ numUpdateQatObserverEpochs: 100
 seed: 47
 
 # Dataset location
-dataTrainDir: 'datasets'
-dataValDir: 'datasets'
+dataTrainDir: '/homes/jmusel/jmuse/datasets'
+dataValDir: '/homes/jmusel/jmuse/datasets'
 
 # Checkpoints
-checkpointSaveDir: 'experiment_logs/LeNet5_baseline_ckpt'
+#checkpointSaveDir: '/homes/jmusel/jmuse/experiment_ckpt/LeNet5_baseline_ckpt'
+#checkpointSaveFileNameFormat: 'ckpt_LeNet5_baseline_epoch{}.pth.tar'
+checkpointSaveDir: 'experiment_ckpt/LeNet5_baseline_ckpt'
 checkpointSaveFileNameFormat: 'ckpt_LeNet5_baseline_epoch{}.pth.tar'
 
 # Log Dir

@@ -259,12 +259,12 @@ class experimentBase(object):
         if (self.config.prune is True and self.experimentStatus.flagPruned is False) or \
         (self.config.quantize is True and self.experimentStatus.flagFusedQuantized is False):
             if self.config.prune is True and self.experimentStatus.flagPruned is False:
-                self.quantize_model()
-                self.experimentStatus.flagFusedQuantized = True
-
-            if self.config.quantize is True and self.experimentStatus.flagFusedQuantized is False:
                 self.prune_network()
                 self.experimentStatus.flagPruned = True
+
+            if self.config.quantize is True and self.experimentStatus.flagFusedQuantized is False:
+                self.quantize_model()
+                self.experimentStatus.flagFusedQuantized = True
 
 
     def adjust_learning_rate(self, epoch, batchIdx, optimizer):
@@ -303,9 +303,19 @@ class experimentBase(object):
         :param inpLace: Whether the quantization should be done in place
         :return: None
         """
+        needToPrune = False
+        if self.experimentStatus.flagPruned is True:
+            custom_prune.unPruneNetwork(self.model)
+            needToPrune = True
+            self.experimentStatus.flagPruned = False
+
         self.model.fuse_model()
         self.model.qconfig = self.qatConfig
         torch.quantization.prepare_qat(self.model, inplace=True)
+
+        if needToPrune is True:
+            self.prune_network()
+            self.experimentStatus.flagPruned = True
 
     def initialize_optimizer (self):
         """
@@ -396,6 +406,12 @@ class experimentBase(object):
         :return: None
         """
         if (self.multiprocessing is False) or (self.multiprocessing is True and hvd.rank() == 0):
+            recoverPrune = False
+            if self.experimentStatus.flagPruned is True:
+                recoverPrune = True
+                self.experimentStatus.flagPruned = False
+                custom_prune.unPruneNetwork(self.model)
+
             filename = self.config.checkpointSaveFileNameFormat.format(self.experimentStatus.numEpochTrained)
             if not os.path.exists(filePath):
                 os.makedirs(filePath)
@@ -407,6 +423,10 @@ class experimentBase(object):
                 'model': self.model.state_dict()
             }
             torch.save(state, path)
+
+            if recoverPrune:
+                self.experimentStatus.flagPruned = True
+                self.prune_network()
 
     def evaluate(self, data, target, isTrain=False) -> torch.Tensor:
         """
@@ -443,8 +463,6 @@ class experimentBase(object):
 
         if self.config.enableLossWeightL2:
             for key, tensor in globalWeightDict.items():
-                weightGroupLassoLoss.add_(custom_prune.calculateChannelGroupLasso(tensor,
-                                                                                  clusterSize=self.config.pruneCluster))
                 weightL2Loss.add_(tensor.pow(2.0).sum())
             weightL2Loss.mul_(self.config.lossWeightL2Lambda)
 
@@ -586,7 +604,7 @@ class experimentBase(object):
         def intercept_activation(module, input, output):
             activationList.append(output)
 
-        def evaluate_setup (module : torch.nn.Module, prefix=None):
+        def evaluate_setup (module : torch.nn.Module, needPrune=False, prefix=None):
             interceptHandleList = []
             weightList = []
             layerNameList = []
@@ -597,16 +615,17 @@ class experimentBase(object):
                 else:
                     modulePrefix = name
                 if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d, nn.Linear)):
-                    custom_prune.applyClusterPruning(m, name='weight',
-                                             clusterSize=self.config.pruneCluster,
-                                             threshold=self.config.pruneThreshold)
+                    if needPrune is True:
+                        custom_prune.applyClusterPruning(m, name='weight',
+                                                 clusterSize=self.config.pruneCluster,
+                                                 threshold=self.config.pruneThreshold)
                     interceptHandle = m.register_forward_hook(intercept_activation)
                     interceptHandleList.append(interceptHandle)
                     weightList.append(m.weight.detach().clone())
                     layerNameList.append(modulePrefix)
                 else:
                     localInterceptHandleList, localWeightList, localLayerNameList = \
-                        evaluate_setup(m, modulePrefix)
+                        evaluate_setup(m, needPrune, modulePrefix)
 
                     interceptHandleList.extend(localInterceptHandleList)
                     weightList.extend(localWeightList)
@@ -634,15 +653,16 @@ class experimentBase(object):
             assert hvd.size() == 1, "Sparsity evaluation cannot be done in multi-processing mode!"
 
         # Fuse and quantized the model if this is haven't been done so
-        evaluatedModel = copy.deepcopy(self.model)
+        #evaluatedModel = copy.deepcopy(self.model)
         if self.experimentStatus.flagFusedQuantized is False:
-            evaluatedModel.fuse_model()
-            evaluatedModel.qconfig = self.qatConfig
-            torch.quantization.prepare_qat(evaluatedModel, inplace=True)
+            self.quantize_model()
+            self.experimentStatus.flagFusedQuantized = True
+
+        evaluatedModel = self.model
 
         # Apply pruning mask, and activation interception, extract weight
         interceptHandleList, weightList, layerNameList = \
-            evaluate_setup(evaluatedModel)
+            evaluate_setup(evaluatedModel, self.experimentStatus.flagPruned is False)
 
         # Compute weight sparsity
         weightSparsityList = generate_sparsity_list(weightList)

@@ -46,7 +46,7 @@ export HOROVOD_TIMELINE="${PBS_JOBID}_timeline.json"
 export HOROVOD_TIMELINE_MARK_CYCLES=0
 export HOROVOD_FUSION_THRESHOLD=134217728
 
-source activate /homes/jmusel/jmuse/SparseNN_training/env
+source activate /homes/jmusel/SparseNN_training/env
 
 echo "PBS Job Number      " $(echo $PBS_JOBID | sed 's/\..*//')
 echo "PBS batch run on    " $(hostname)
@@ -64,7 +64,9 @@ time mpirun -x LD_LIBRARY_PATH \
     -x PATH \
     --map-by ppr:1:socket:pe=$num_core_per_socket --report-bindings \
     --oversubscribe -n $num_proc \
-    python LeNetExperiment.py --mode train --config experiment_configs/config_LeNet5_baseline.yaml --multiprocessing | tee output.txt
+    python LeNetExperiment.py --mode train --config experiment_configs/config_LeNet5_quantize_cluster4.yaml \
+    --load_checkpoint 2 --checkpoint_path experiment_ckpt/LeNet5_prune_cluster4_ckpt/ckpt_LeNet5_prune_cluster4_epoch19.pth.tar \
+    --multiprocessing  | tee output.txt
 # time mpirun -x LD_LIBRARY_PATH \
 #     -x OMP_NUM_THREADS \
 #     -x PATH -x I_MPI_FABRICS \
