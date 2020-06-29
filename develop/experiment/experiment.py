@@ -540,6 +540,8 @@ class experimentBase(object):
         Train a model for multiple epoch and evaluate on the validation set after every epoch
         :return: None
         """
+        if self.multiprocessing is False or (self.multiprocessing is True and hvd.rank() == 0):
+            print ("Start training")
         self.prepare_model()
         optimizer = self.initialize_optimizer()
         if self.optimizerStateDict:
