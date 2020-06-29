@@ -10,6 +10,7 @@ import custom_modules.custom_modules as cm
 import torch
 import torch.nn as nn
 import torch.nn.init as init
+from torch.quantization import QuantStub, DeQuantStub
 from typing import Union, List
 
 # Define all the classes and methods that this module will be able to export
@@ -202,6 +203,9 @@ class ResNet(nn.Module):
             stride=self.stage_strides[3]
         )
 
+        self.quant = QuantStub()
+        self.deQuant = DeQuantStub()
+
         # Parameter initialization
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
@@ -240,6 +244,7 @@ class ResNet(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
+        output = self.quant(x)
         output = self.inputConvBNReLu(x)
         if self.maxpool is not None:
             output = self.maxpool(output)
@@ -253,8 +258,19 @@ class ResNet(nn.Module):
         output = self.avgpool(output)
         output = self.flatten(output, 1)
         output = self.fc(output)
+        output = self.deQuant(x)
 
         return output
+
+    # Fuse layers prior to quantization
+    def fuse_model(self):
+        for m in self.modules():
+            if type(m) == cm.ConvBNReLU:
+                # Fuse the layers in ConvBNReLU module, which is derived from nn.Sequential
+                # Use the default fuser function
+                torch.quantization.fuse_modules(m, ['0', '1', '2'], inplace=True)
+            elif type(m) == cm.ConvBN:
+                torch.quantization.fuse_modules(m, ['0', '1'], inplace=True)
 
 
 
