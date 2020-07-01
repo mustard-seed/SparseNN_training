@@ -15,7 +15,7 @@ from typing import Union, List
 
 # Define all the classes and methods that this module will be able to export
 # TODO: Update this list
-__all__ = []
+__all__ = ['ResNet', 'cifar_resnet56', 'BasicBlock', 'BottleneckBlock', 'conv1x1BN', 'conv3x3BN']
 
 
 def conv3x3BN(in_planes, out_planes, stride=1, groups=1, dilation=1, require_relu=False):
@@ -73,7 +73,7 @@ class BasicBlock (nn.Module):
                                  require_relu=True)
         self.convBN2 = conv3x3BN(in_planes=planes,
                                  out_planes=planes * self.expansion,
-                                 stride=stride)
+                                 stride=1)
         self.shortcut = nn.Identity()
         if stride != 1 or in_planes != planes * self.expansion:
             self.shortcut = conv1x1BN(
@@ -108,7 +108,7 @@ class BottleneckBlock (nn.Module):
         # Gotcha: channel dimension only can change over the first layer
         self.convBN1 = conv1x1BN(in_planes=in_planes,
                                  out_planes=planes,
-                                 stride=stride,
+                                 stride=1,
                                  require_relu=True)
         self.convBN2 = conv3x3BN(in_planes=planes,
                                  out_planes=planes,
@@ -116,7 +116,7 @@ class BottleneckBlock (nn.Module):
                                  require_relu=True)
         self.convBN3 = conv1x1BN(in_planes=planes,
                                  out_planes=planes * self.expansion,
-                                 stride=stride,
+                                 stride=1,
                                  require_relu=False)
         self.shortcut = nn.Identity()
         if stride != 1 or in_planes != planes * self.expansion:
@@ -164,7 +164,7 @@ class ResNet(nn.Module):
         self.in_planes = 16 if family == 'cifar10' else 64
         self.in_kernel_size = 3 if family == 'cifar10' else 7
         self.in_stride = 1 if family == 'cifar10' else 2
-        self.inputConvBNReLu = cm.ConvBNReLU(
+        self.inputConvBNReLU = cm.ConvBNReLU(
             in_planes=3,
             out_planes=self.in_planes,
             stride=self.in_stride,
@@ -172,7 +172,6 @@ class ResNet(nn.Module):
         )
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1) if family == 'imagenet1k' else None
-        self.avgpool = nn.AvgPool2d(1, 1)
         self.fc = nn.Linear(self.fc_input_number, self.num_classes)
 
         self.stage1 = self._make_stage(
@@ -245,7 +244,7 @@ class ResNet(nn.Module):
 
     def forward(self, x):
         output = self.quant(x)
-        output = self.inputConvBNReLu(x)
+        output = self.inputConvBNReLU(x)
         if self.maxpool is not None:
             output = self.maxpool(output)
         output = self.relu(output)
@@ -255,10 +254,10 @@ class ResNet(nn.Module):
         output = self.stage3(output)
         if self.stage4 is not None:
             output = self.stage4(output)
-        output = self.avgpool(output)
-        output = self.flatten(output, 1)
+        output = nn.functional.avg_pool2d(output, output.size()[3])
+        output = torch.flatten(output, 1)
         output = self.fc(output)
-        output = self.deQuant(x)
+        output = self.deQuant(output)
 
         return output
 
@@ -271,6 +270,17 @@ class ResNet(nn.Module):
                 torch.quantization.fuse_modules(m, ['0', '1', '2'], inplace=True)
             elif type(m) == cm.ConvBN:
                 torch.quantization.fuse_modules(m, ['0', '1'], inplace=True)
+
+def cifar_resnet56() -> ResNet:
+    """
+    Generate and initialize a ResNet-56 network for CIFAR-10
+    :return: The ResNet-56 network
+    """
+    block = BasicBlock
+    # Number of blocks per stage. Each stage has two parametrized layers
+    num_blocks = [9, 9, 9]
+    network = ResNet(block, num_blocks, 'cifar10')
+    return network
 
 
 

@@ -1,7 +1,7 @@
 # YAML file parsers treats scientific notaiton as strings
 
 # Iterations, etc
-numEpochToTrain: 4
+numEpochToTrain: 30
 batchSizePerWorker: 64
 numThreadsPerWorker: 28
 

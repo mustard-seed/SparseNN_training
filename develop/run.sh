@@ -8,9 +8,11 @@
 #PBS -j oe
 ###Each node has  CPU (Intel 8280)
 ###Select processor node with 112 logical CPU cores each
+###PBS -l select=1:ncpus=112:host=vsl048+1:ncpus=112:host=vsl074
 #PBS -l select=8:ncpus=112
+###PBS -l nodes=vsl042+vsl048+vsl047+vsl065+vsl066+vsl051+vsl052+vsl060
 ###Request exclusive placement on the node
-#PBS -l place=excl
+###PBS -l place=excl
 ###Name to appear on the job list
 #PBS -N qsub_train
 
@@ -64,9 +66,14 @@ time mpirun -x LD_LIBRARY_PATH \
     -x PATH \
     --map-by ppr:1:socket:pe=$num_core_per_socket --report-bindings \
     --oversubscribe -n $num_proc \
-    python LeNetExperiment.py --mode train --config experiment_configs/config_LeNet5_prune_cluster4.yaml \
-    --load_checkpoint 2 --checkpoint_path experiment_logs/LeNet5_sparsify_cluster4_2_log/ckpt_LeNet5_sparsify_cluster4_epoch39.pth.tar \
+    python CifarResNet56Experiment.py --mode train --config_file experiment_configs/config_cifar10_resnet56_baseline.yaml \
     --multiprocessing  | tee output.txt
+#time mpirun -x LD_LIBRARY_PATH \
+#      -x OMP_NUM_THREADS \
+#      -x PATH \
+#     --map-by ppr:1:socket:pe=$num_core_per_socket --report-bindings \
+#     --oversubscribe -n $num_proc \
+#     python pytorch_synthetic_benchmark.py --no-cuda 2>&1 | tee output.txt
 # time mpirun -x LD_LIBRARY_PATH \
 #     -x OMP_NUM_THREADS \
 #     -x PATH -x I_MPI_FABRICS \

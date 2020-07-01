@@ -38,7 +38,7 @@ dataTrainDir: '/homes/jmusel/jmuse/datasets'
 dataValDir: '/homes/jmusel/jmuse/datasets'
 
 # Checkpoints
-checkpointSaveDir: 'experiment_ckpt/LeNet5_quantize_cluster4_3_ckpt'
+checkpointSaveDir: 'experiment_logs/LeNet5_quantize_cluster4_2_log'
 checkpointSaveFileNameFormat: 'ckpt_epoch{}.pth.tar'
 
 # Log Dir

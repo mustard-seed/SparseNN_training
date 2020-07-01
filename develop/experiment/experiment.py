@@ -8,7 +8,6 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.intrinsic.qat
 import torch.utils.data.distributed
-import horovod.torch as hvd
 import yaml
 from easydict import EasyDict as edict
 from abc import ABC, abstractmethod
@@ -20,6 +19,7 @@ import copy
 import csv
 import time
 
+import horovod.torch as hvd
 # Make sure to import the global the following globals
 # Global list for storing the intermediate activation layers
 globalActivationDict = {}
@@ -290,6 +290,8 @@ class experimentBase(object):
         if self.multiprocessing is True:
             if epoch < self.config.lrMPAdjustmentWarmUpEpochs:
                 lrAdj = 1. * (roundedEpoch * (hvd.size() - 1) / self.config.lrMPAdjustmentWarmUpEpochs + 1)
+            else:
+                lrAdj = hvd.size()
 
         lr = lr * lrAdj
         for param_group in optimizer.param_groups:
@@ -523,6 +525,15 @@ class experimentBase(object):
 
             batchTime = (time.time() - end)
             end = time.time()
+            if self.multiprocessing is False or (self.multiprocessing is True and hvd.rank() == 0):
+                if int(batchIdx+1) % 32 == 0:
+                    print('Epoch: [{0}][{1}/{2}]\t'
+                          'Loss {loss:.4f}\t'
+                          'Prec@1 {top1:.3f})'.format(
+                        epoch, batchIdx, len(self.trainDataLoader),
+                        loss=self.trainMeter.aggregateLoss.val,
+                        top1=self.trainMeter.aggregateAccuracyTop1.val))
+
             self.trainTimeMeter.update(dataLoadingTime=torch.tensor(dataLoadingTime), batchTime=torch.tensor(batchTime))
             # End of training one iteration
         # End of training one epoch
