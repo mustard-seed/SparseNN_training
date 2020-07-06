@@ -173,6 +173,7 @@ class ResNet(nn.Module):
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1) if family == 'imagenet1k' else None
         self.fc = nn.Linear(self.fc_input_number, self.num_classes)
+        self.averagePool = nn.AvgPool2d(kernel_size=7) if family == 'imagenet1k' else nn.AvgPool2d(kernel_size=8)
 
         self.stage1 = self._make_stage(
                 block=block,
@@ -254,7 +255,8 @@ class ResNet(nn.Module):
         output = self.stage3(output)
         if self.stage4 is not None:
             output = self.stage4(output)
-        output = nn.functional.avg_pool2d(output, output.size()[3])
+        #output = nn.functional.avg_pool2d(output, output.size()[3])
+        output = self.averagePool(output)
         output = torch.flatten(output, 1)
         output = self.fc(output)
         output = self.deQuant(output)

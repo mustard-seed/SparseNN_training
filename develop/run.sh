@@ -66,7 +66,8 @@ time mpirun -x LD_LIBRARY_PATH \
     -x PATH \
     --map-by ppr:1:socket:pe=$num_core_per_socket --report-bindings \
     --oversubscribe -n $num_proc \
-    python CifarResNet56Experiment.py --mode train --config_file experiment_configs/config_cifar10_resnet56_baseline.yaml \
+    python CifarResNet56Experiment.py --mode train --config_file experiment_configs/config_cifar10_resnet56_quantize_c1_p4_free_4.yaml \
+    --load_checkpoint 2 --checkpoint_path experiment_logs/cifar10_resnet56_prune_c1_p4_2_log/ckpt_cifar10_resnet56_prune_epoch4.pth.tar \
     --multiprocessing  | tee output.txt
 #time mpirun -x LD_LIBRARY_PATH \
 #      -x OMP_NUM_THREADS \

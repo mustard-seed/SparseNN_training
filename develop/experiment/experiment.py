@@ -378,9 +378,10 @@ class experimentBase(object):
             state_dict = torch.load(checkpoint)
 
         experimentStatus = state_dict['experimentStatus']
+        self.experimentStatus = experimentStatus
+        self.experimentStatus.numEpochTrained = 0
         config = state_dict['experimentConfig']
         if loadModelOnly is False:
-            self.experimentStatus = experimentStatus
             self.config = config
             # Save the optimizer state
             self.optimizerStateDict = state_dict['optimizer']
@@ -526,7 +527,7 @@ class experimentBase(object):
             batchTime = (time.time() - end)
             end = time.time()
             if self.multiprocessing is False or (self.multiprocessing is True and hvd.rank() == 0):
-                if int(batchIdx+1) % 32 == 0:
+                if int(batchIdx+1) % 10 == 0:
                     print('Epoch: [{0}][{1}/{2}]\t'
                           'Loss {loss:.4f}\t'
                           'Prec@1 {top1:.3f})'.format(
@@ -696,9 +697,13 @@ class experimentBase(object):
         return activationSparsityList, weightSparsityList, layerNameList
         # End of evaluate sparsity
 
-    def save_sparsity_stats(self):
+    def save_sparsity_stats(self, desiredClusterSize=None):
+        if desiredClusterSize is not None:
+            print('Overriding the cluster size in the config to ', desiredClusterSize)
+            self.config.pruneCluster = desiredClusterSize
+
         activationSparsityList, weightSparsityList, layerNameList = self.evaluate_sparsity()
-        filepath = os.path.join(self.config.logDir, 'sparsity_stats.csv')
+        filepath = os.path.join(self.config.logDir, 'sparsity_stats_cluster{}.csv'.format(self.config.pruneCluster))
         with open(filepath, 'w', newline='') as csvfile:
             fieldnames = ['Layer_Name', 'Weight_Sparsity', 'Activation_Sparsity']
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
@@ -707,6 +712,9 @@ class experimentBase(object):
             for idx, layerName in enumerate(layerNameList):
                 activationSparsity = activationSparsityList[idx]
                 weightSparsity= weightSparsityList[idx]
+
+                if weightSparsity is None:
+                    weightSparsity = 'N/A'
 
                 rowDict = {'Layer_Name' : layerName,
                            'Weight_Sparsity': weightSparsity,

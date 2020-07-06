@@ -8,6 +8,7 @@ import torch.utils.data.distributed as distributed
 import torch.multiprocessing as mp
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
+import numpy as np
 
 
 import argparse
@@ -139,7 +140,7 @@ class experimentCifar10ResNet56(experimentBase):
         :param module: Not used
         :return: None
         """
-        global globalWeightDict
+        #global globalWeightDict
         globalWeightDict['inputConvBNReLU'] = self.model.inputConvBNReLU[0].weight.clone()
 
         blockId = 0
@@ -153,6 +154,149 @@ class experimentCifar10ResNet56(experimentBase):
                     name = 'block_{}_shortcut'.format(blockId)
                     globalWeightDict[name] = m.shortcut[0].weight.clone()
                 blockId += 1
+
+    # Override the evaluate_sparsity function
+    def evaluate_sparsity(self) -> (list, list, list):
+        """
+        Evaluate the activation and weight sparsity of the model on the entire validation set
+        :return: Three lists. List one for the average activation sparsity per layer
+                List two for the weight sparsity per layer
+                List three the relevant layer name list
+        """
+        # List of activation intercept layers
+        activationList = []
+        def intercept_activation(module, input, output):
+            activationList.append(output)
+
+        # Change this
+        def evaluate_setup (model : ResNet, needPrune=False, prefix=None):
+            interceptHandleList = []
+            weightList = []
+            layerNameList = []
+
+            targetList = [model.inputConvBNReLU,
+                          model.stage1, model.stage2, model.stage3, model.stage4,
+                          model.averagePool, model.fc]
+
+            blockId = 0
+            for target in targetList:
+                if isinstance(target, ConvBNReLU):
+                    # Input convolution layer
+                    if needPrune is True:
+                        custom_pruning.applyClusterPruning(
+                            target[0], name='weight',
+                            clusterSize=self.config.pruneCluster,
+                            threshold=self.config.pruneThreshold
+                        )
+                    interceptHandle = target.register_forward_hook(intercept_activation)
+                    interceptHandleList.append(interceptHandle)
+                    weightList.append(target[0].weight.detach().clone())
+                    layerNameList.append('Input ConvBNReLU')
+                elif isinstance(target, nn.Sequential):
+                    for m in target.modules():
+                        if isinstance(m, BasicBlock):
+                            for layerId, layer in enumerate([m.convBN1, m.convBN2]):
+                                name = 'block_{}_layer{}'.format(blockId, layerId)
+                                if needPrune is True:
+                                    custom_pruning.applyClusterPruning(
+                                        layer[0], name='weight',
+                                        clusterSize=self.config.pruneCluster,
+                                        threshold=self.config.pruneThreshold
+                                    )
+                                interceptHandle = layer.register_forward_hook(intercept_activation)
+                                interceptHandleList.append(interceptHandle)
+                                weightList.append(layer[0].weight.detach().clone())
+                                layerNameList.append(name)
+                            if isinstance(m.shortcut, ConvBN):
+                                name = 'block_{}_shortcut'.format(blockId)
+                                if needPrune is True:
+                                    custom_pruning.applyClusterPruning(
+                                        m.shortcut[0], name='weight',
+                                        clusterSize=self.config.pruneCluster,
+                                        threshold=self.config.pruneThreshold
+                                    )
+                                interceptHandle = m.shortcut.register_forward_hook(intercept_activation)
+                                interceptHandleList.append(interceptHandle)
+                                weightList.append(m.shortcut[0].weight.detach().clone())
+                                layerNameList.append(name)
+
+                            interceptHandle = m.register_forward_hook(intercept_activation)
+                            interceptHandleList.append(interceptHandle)
+                            weightList.append(None)
+                            layerNameList.append('block_{}_output'.format(blockId))
+                            blockId += 1
+
+                elif isinstance(target, nn.AvgPool2d):
+                    interceptHandle = target.register_forward_hook(intercept_activation)
+                    interceptHandleList.append(interceptHandle)
+                    weightList.append(None)
+                    layerNameList.append('average_pool')
+
+                elif isinstance(target, nn.Linear):
+                    if needPrune is True:
+                        custom_pruning.applyClusterPruning(
+                            target, name='weight',
+                            clusterSize=self.config.pruneCluster,
+                            threshold=self.config.pruneThreshold
+                        )
+                    interceptHandle = target.register_forward_hook(intercept_activation)
+                    interceptHandleList.append(interceptHandle)
+                    weightList.append(target.weight.detach().clone())
+                    layerNameList.append('final classification')
+
+            return interceptHandleList, weightList, layerNameList
+        #End of helper function evaluate_setup
+
+        def generate_sparsity_list(tensorList : list):
+            sparsityList = []
+            for idx, tensor in enumerate(tensorList):
+                if tensor is not None:
+                    mask = custom_pruning.compute_mask(tensor, self.config.pruneCluster, self.config.pruneThreshold)
+                    mask = mask.byte()
+                    reference = torch.ones_like(mask)
+                    comparison = torch.eq(mask, reference)
+                    numNz = torch.sum(comparison.float())
+                    sparsity = numNz.item() / comparison.numel()
+                else:
+                    sparsity = None
+
+                sparsityList.append(sparsity)
+
+            return sparsityList
+
+        if self.multiprocessing is True:
+            assert hvd.size() == 1, "Sparsity evaluation cannot be done in multi-processing mode!"
+
+        # Fuse and quantized the model if this is haven't been done so
+        #evaluatedModel = copy.deepcopy(self.model)
+        if self.experimentStatus.flagFusedQuantized is False:
+            self.quantize_model()
+            self.experimentStatus.flagFusedQuantized = True
+
+        evaluatedModel = self.model
+
+        # Apply pruning mask, and activation interception, extract weight
+        interceptHandleList, weightList, layerNameList = \
+            evaluate_setup(evaluatedModel, self.experimentStatus.flagPruned is False)
+
+        # Compute weight sparsity
+        weightSparsityList = generate_sparsity_list(weightList)
+        activationSparsityList = None
+
+        with torch.no_grad():
+            for batchIdx, (data, target) in enumerate(self.valDataLoader):
+                activationList.clear()
+                output = evaluatedModel(data)
+                batchActivationSparsityList = np.array(generate_sparsity_list(activationList))
+                if activationSparsityList is None:
+                    activationSparsityList = np.zeros_like(batchActivationSparsityList)
+
+                activationSparsityList = np.add(batchActivationSparsityList, activationSparsityList)
+                # End of iteration of all validation data
+            activationSparsityList = activationSparsityList / float(len(self.valDataLoader))
+
+        return activationSparsityList, weightSparsityList, layerNameList
+        # End of evaluate sparsity
 
 
     def prune_network(self) -> None:
@@ -191,6 +335,9 @@ if __name__ == '__main__':
                         help='Enable multiprocessing (using Horovod as backend). Default: False')
     parser.add_argument('--checkpoint_path', type=str,
                         help='Path to the checkpoint to be loaded. Required if --load_checkpoint is set as 1 or 2')
+    parser.add_argument('--override_cluster_size', type=int,
+                       help='Override the cluster size in the experiment config when performing sparsity evaluation')
+
 
     args = parser.parse_args()
     if args.multiprocessing is True:
@@ -211,4 +358,4 @@ if __name__ == '__main__':
         newConfigFilePath = os.path.join(logPath, configFileName)
         shutil.copy(args.config_file, newConfigFilePath)
     elif args.mode == 'evaluate_sparsity':
-        experiment.save_sparsity_stats()
+        experiment.save_sparsity_stats(args.override_cluster_size)

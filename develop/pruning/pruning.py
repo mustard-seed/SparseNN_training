@@ -145,8 +145,12 @@ def calculateChannelGroupLasso(input: torch.Tensor, clusterSize=2) -> torch.Tens
 
     # TODO: The more chunks there are, the slower this gets.... Fix this!
     # Each chunk is a view of the original tensor, so there is no copy overhead
-    for chunk in list(torch.chunk(input=squared, chunks=numChunks, dim=1)):
-        square_summed = torch.sum(chunk, 1, keepdim=False)
-        sqrt = square_summed.add_(torch.tensor(eps)).pow_(0.5)
+    if clusterSize > 1:
+        for chunk in list(torch.chunk(input=squared, chunks=numChunks, dim=1)):
+            square_summed = torch.sum(chunk, 1, keepdim=False)
+            sqrt = square_summed.add_(torch.tensor(eps)).pow_(0.5)
+            accumulate.add_(torch.sum(sqrt))
+    elif clusterSize == 1:
+        sqrt = squared.add_(torch.tensor(eps)).pow_(0.5)
         accumulate.add_(torch.sum(sqrt))
     return accumulate
