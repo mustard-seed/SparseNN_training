@@ -1,4 +1,5 @@
 import torch.nn as nn
+import torch
 
 
 class ConvBNReLU(nn.Sequential):
@@ -63,3 +64,15 @@ class ConvBN(nn.Sequential):
             nn.Conv2d(in_planes, out_planes, kernel_size, stride, padding, groups=groups, bias=False),
             nn.BatchNorm2d(out_planes, momentum=0.1)
         )
+
+class EltwiseAdd(nn.Module):
+    def __init__(self, relu=False):
+        super().__init__()
+        self.relu = relu
+
+    def forward(self, left_input: torch.Tensor, right_input: torch.Tensor):
+        output = left_input + right_input
+        if self.relu is True:
+            output = torch.nn.functional.relu(output)
+
+        return output

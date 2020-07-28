@@ -81,14 +81,16 @@ class BasicBlock (nn.Module):
                 out_planes=planes * self.expansion,
                 stride=stride
             )
+        self.add = cm.EltwiseAdd(relu=True)
 
     def forward(self, x):
         out = self.convBN1(x)
         out = self.convBN2(out)
         shortcut = self.shortcut(x)
 
-        out += shortcut
-        out = torch.nn.functional.relu(out)
+        # out += shortcut
+        # out = torch.nn.functional.relu(out)
+        out = self.add(out, shortcut)
         return out
 
 
@@ -125,6 +127,7 @@ class BottleneckBlock (nn.Module):
                 out_planes=planes * self.expansion,
                 stride=stride
             )
+        self.add = cm.EltwiseAdd(relu=True)
 
     def forward(self, x):
         out = self.convBN1(x)
@@ -132,8 +135,9 @@ class BottleneckBlock (nn.Module):
         out = self.convBN3(out)
         shortcut = self.shortcut(x)
 
-        out += shortcut
-        out = torch.nn.functional.relu(out)
+        # out += shortcut
+        # out = torch.nn.functional.relu(out)
+        out = self.add(out, shortcut)
         return out
 
 
