@@ -172,3 +172,57 @@ class EltAddInfo(LayerInfo):
         self.inputHeight = inputHeight
         self.inputWidth = inputWidth
         self.channels = inputChannels
+
+class TraceDNN:
+    def __init__(self):
+        pass
+
+    def insertLayer(layer: LayerInfo) -> None:
+        """
+        Insert a new layer into the graph
+        :param layer: An LayerInfo object
+        :return: None
+        """
+        pass
+
+    def addForwardEdge(sourceLayerId: int, sinkLayerId: int) -> None:
+        """
+        Add a forward dependency
+        :param sourceLayerId: Id of the layer that generates the tensor during inference.
+        :param sinkLayerId: Id of the layer that receives the tensor during inference.
+        :return: None
+        """
+        pass
+
+    def addBackward(sourceLayerId: int, sinkLayerId: int) -> None:
+        """
+        Add a backward endge
+        :param sourceLayerId: Id of the layer that generates the tensor during inference. It will be at the end of the edge
+        :param sinkLayerId: Id of the layer that receives the tensor during inference. It will be the emitter of the edge
+        :return: None
+        """
+        pass
+
+    def resetAnnotation() -> None:
+        """
+        Clears all memory and sparsification flag of layers in the graph
+        :return: Hone
+        """
+        pass
+
+    def annotate(numMemBanks: int) -> None:
+        """
+        Annotates memory and sparsification fields of layers in the graph
+        :param numMemBanks:
+        :return: None
+        """
+        pass
+
+    def dump(fileStream = None) -> str:
+        """
+        Dumps the DNN IR in the inserted execution order as a YAML string.
+        If a file stream is provided, the string will be written to the file.
+        :param fileStream: Optional. File stream to dump the YAML string to.
+        :return: The YAML string
+        """
+        pass
