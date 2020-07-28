@@ -35,8 +35,12 @@ class LayerInfo(edict):
         self.outputWidth = None
         self.outputNextNumGroups = None
         self.outputCurrentNumGroups = None
+        self.outputCanBeSparse = False
 
         self.outputMemoryLocation = None
+
+        self.inputFracBits = []
+        self.inputMemoryLocations = []
 
 class ConvInfo(LayerInfo):
     """
@@ -75,13 +79,15 @@ class ConvInfo(LayerInfo):
                                              kernelStride=kernelStride)
         self.outputChannels = outputChannels
 
-        self.inputFracBits = [inputFracBits]
+        if len(self.inputFracBits) == 0:
+            self.inputFracBits.append(inputFracBits)
+        else:
+            self.inputFracBits[0] = inputFracBits
         self.inputHeight = inputHeight
         self.inputWidth = inputWidth
         self.inputBorderPadding = inputBorderPadding
         self.inputTransConvPadding = inputTransConvPadding
         self.inputChannels = inputChannels
-        self.inputMemoryLocations = []
 
         self.weightFracBits = weightFracBits
         self.kernelSize = kernelSize
@@ -124,12 +130,14 @@ class MaxPoolInfo(LayerInfo):
                                                    kernelStride=kernelStride)
         self.outputCurrentNumGroups = 1
 
-        self.inputFracBits = [inputFracBits]
+        if len(self.inputFracBits) == 0:
+            self.inputFracBits.append(inputFracBits)
+        else:
+            self.inputFracBits[0] = inputFracBits
         self.inputHeight = inputHeight
         self.inputWidth = inputWidth
         self.inputBorderPadding = inputBorderPadding
         self.channels = inputChannels
-        self.inputMemoryLocations = []
 
         self.kernelSize = kernelSize
         self.kernelStride = kernelStride
@@ -155,8 +163,12 @@ class EltAddInfo(LayerInfo):
         self.outputHeight = inputHeight
         self.outputCurrentNumGroups = 1
 
-        self.inputFracBits = [inputLeftFracBits, inputRightFracBits]
+        if len(self.inputFracBits) == 0:
+            self.inputFracBits.append(inputLeftFracBits)
+            self.inputFracBits.append(inputRightFracBits)
+        else:
+            self.inputFracBits[0] = inputLeftFracBits
+            self.inputFracBits[1] = inputRightFracBits
         self.inputHeight = inputHeight
         self.inputWidth = inputWidth
         self.channels = inputChannels
-        self.inputMemoryLocations = []
