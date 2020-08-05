@@ -721,6 +721,9 @@ class experimentBase(object):
                            'Activation_Sparsity' : activationSparsity}
                 writer.writerow(rowDict)
 
+    def print_model(self):
+        print(self.model)
+
 
 
 

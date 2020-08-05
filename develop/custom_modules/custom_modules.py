@@ -70,9 +70,17 @@ class EltwiseAdd(nn.Module):
         super().__init__()
         self.relu = relu
 
-    def forward(self, left_input: torch.Tensor, right_input: torch.Tensor):
+    def forward(self, left_input: torch.Tensor, right_input: torch.Tensor) -> torch.Tensor:
         output = left_input + right_input
         if self.relu is True:
             output = torch.nn.functional.relu(output)
 
+        return output
+
+class Flatten(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        output = torch.flatten(input, 1)
         return output

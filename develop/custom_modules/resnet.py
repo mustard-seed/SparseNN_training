@@ -209,6 +209,7 @@ class ResNet(nn.Module):
 
         self.quant = QuantStub()
         self.deQuant = DeQuantStub()
+        self.flatten = cm.Flatten()
 
         # Parameter initialization
         for m in self.modules():
@@ -261,7 +262,7 @@ class ResNet(nn.Module):
             output = self.stage4(output)
         #output = nn.functional.avg_pool2d(output, output.size()[3])
         output = self.averagePool(output)
-        output = torch.flatten(output, 1)
+        output = self.flatten(output)
         output = self.fc(output)
         output = self.deQuant(output)
 
