@@ -250,7 +250,7 @@ class ResNet(nn.Module):
 
     def forward(self, x):
         output = self.quant(x)
-        output = self.inputConvBNReLU(x)
+        output = self.inputConvBNReLU(output)
         if self.maxpool is not None:
             output = self.maxpool(output)
         output = self.relu(output)
