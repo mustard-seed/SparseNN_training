@@ -2,6 +2,7 @@ import quantization.quantization as custom_quant
 import pruning.pruning as custom_prune
 from pruning.pruning import compute_mask
 from utils.meters import TimeMeter
+from tracer.tracer import TraceDNN as Tracer
 
 import torch
 import torch.nn as nn
@@ -118,7 +119,6 @@ class experimentBase(object):
     Base experiment class for classifier training and evaluation,
     with multinode processing support
     """
-
     @abstractmethod
     def __init__(self, configFile, multiprocessing=False):
         """
@@ -723,6 +723,29 @@ class experimentBase(object):
 
     def print_model(self):
         print(self.model)
+
+    def trace_model(self, numMemoryRegions: int=3) -> None:
+        """
+        Trace the model after pruning and quantization, and save the trace and parameters
+        :return: None
+        """
+        dirname = self.config.checkpointSaveDir
+        fileBaseName = 'model'
+        # Prune and quantize the model
+        if self.experimentStatus.flagPruned is False:
+            self.prune_network()
+            self.experimentStatus.flagPruned = True
+
+        if self.experimentStatus.flagFusedQuantized is False:
+            self.quantize_model()
+            self.experimentStatus.flagFusedQuantized = True
+
+        trace = Tracer(self.model)
+        for (data, target) in self.valDataLoader:
+            trace.traceModel(data)
+            break
+        trace.annotate(numMemoryRegions)
+        trace.dump(dirname, fileBaseName)
 
 
 

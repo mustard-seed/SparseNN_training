@@ -11,8 +11,11 @@ from torch.quantization import QuantStub as QuantStub
 import custom_modules.custom_modules as cm
 import quantization.quantization as qt
 
-from typing import List
+from typing import List, Union
 from easydict import EasyDict as edict
+import yaml
+import os
+from copy import deepcopy
 
 def find_conv1d_output_dim(inputDim: int,
                            inputBorderPadding: int,
@@ -20,9 +23,18 @@ def find_conv1d_output_dim(inputDim: int,
                            kernelSize: int,
                            kernelStride: int,
                            ) -> int:
-    assert ((inputTransConvPadding + 1) * inputDim + 2 * inputBorderPadding - kernelSize) % kernelStride == 0, \
-        "Incompatibility among input dimension, kernel stride, kernel size, trans-conv padding, and border padding"
-    outputDim = ((inputTransConvPadding + 1) * inputDim + 2 * inputBorderPadding - kernelSize) // kernelStride + 1
+    """
+    Computes 1D convolution output dimension
+    :param inputDim: 1D input length
+    :param inputBorderPadding: Padding to be added to the left/right. Assumes symmetrical zero-padding
+    :param inputTransConvPadding: How many padding to insert between adjacent input elements to faciliate transpose convolution
+    :param kernelSize: Size of the convolution kernel
+    :param kernelStride: convolution stride
+    :return: 1D convolution output dimension
+    """
+    # assert (inputDim + (inputDim-1)*inputTransConvPadding + 2 * inputBorderPadding - kernelSize) % kernelStride == 0, \
+    #     "Incompatibility among input dimension, kernel stride, kernel size, trans-conv padding, and border padding"
+    outputDim = (inputDim + (inputDim-1)*inputTransConvPadding + 2 * inputBorderPadding - kernelSize) // kernelStride + 1
 
     return outputDim
 
@@ -33,24 +45,45 @@ class LayerInfo(edict):
     def __init__(self,
                  operationType : str,
                  outputFracBits : int,
-                 outputRelu : bool
+                 outputRelu : bool,
+                 layerID: int
                  ):
         super().__init__()
-        self.operationType = operationType
-        self.outputFracBits = outputFracBits
-        self.outputRelu = outputRelu
+        self.operationType: str = operationType
+        self.outputFracBits: int = outputFracBits
+        self.outputRelu: bool = outputRelu
 
-        self.outputChannels = None
-        self.outputHeight = None
-        self.outputWidth = None
-        self.outputNextNumGroups = None
-        self.outputCurrentNumGroups = None
-        self.outputCanBeSparse = False
+        self.outputChannels: Union[int, None] = None
+        self.outputHeight: Union[int, None] = None
+        self.outputWidth: Union[int, None] = None
+        self.outputNextNumGroups: Union[int, None] = None
+        self.outputCurrentNumGroups: Union[int, None] = None
+        self.outputCanBeSparse: bool = False
 
-        self.outputMemoryLocation = None
+        self.outputMemoryLocation: Union[int, None] = None
 
-        self.inputFracBits = []
-        self.inputMemoryLocations = []
+        self.sparseInput: bool = False
+
+        self.inputFracBits: List[int] = []
+        self.inputMemoryLocations: List[int] = []
+
+        self.layerID = layerID
+
+class QuantStubInfo(LayerInfo):
+    def __init__(self,
+                 outputFracBits: int,
+                 outputChannels: int,
+                 outputHeight: int,
+                 outputWidth: int,
+                 layerID: int
+                 ):
+        super().__init__(operationType='quantstub',
+                         outputFracBits=outputFracBits,
+                         outputRelu=False,
+                         layerID=layerID)
+        self.outputChannels = outputChannels
+        self.outputHeight = outputHeight
+        self.outputWidth = outputWidth
 
 class ConvInfo(LayerInfo):
     """
@@ -71,12 +104,16 @@ class ConvInfo(LayerInfo):
                  weightFracBits : int,
                  kernelSize : int,
                  kernelStride : int,
+                 hasBias: bool,
 
-                 channelGroups : int
+                 channelGroups : int,
+
+                 layerID: int
                  ):
         super().__init__(operationType='conv',
                          outputFracBits=outputFracBits,
-                         outputRelu=outputRelu)
+                         outputRelu=outputRelu,
+                         layerID=layerID)
         self.outputWidth = find_conv1d_output_dim(inputDim=inputWidth,
                                              inputBorderPadding=inputBorderPadding,
                                              inputTransConvPadding=inputTransConvPadding,
@@ -102,8 +139,9 @@ class ConvInfo(LayerInfo):
         self.weightFracBits = weightFracBits
         self.kernelSize = kernelSize
         self.kernelStride = kernelStride
-        self.weightByteFileStartPosition = None
-        self.biasByteFileStartPosition = None
+        self.weightParameterFileStartPosition: Union[int, None] = None
+        self.biasParameterFileStartPosition: Union[int, None] = None
+        self.hasBias = hasBias
 
         assert (inputChannels % channelGroups == 0) and (outputChannels % channelGroups == 0), \
             'channelGroups does not divide into inputChannels or outputChannels'
@@ -121,11 +159,14 @@ class MaxPoolInfo(LayerInfo):
                  inputChannels: int,
 
                  kernelSize: int,
-                 kernelStride: int
+                 kernelStride: int,
+
+                 layerID: int
                  ):
         super().__init__(operationType='maxpool',
                          outputFracBits=outputFracBits,
-                         outputRelu=outputRelu)
+                         outputRelu=outputRelu,
+                         layerID=layerID)
 
         self.outputChannels = inputChannels
         self.outputWidth = find_conv1d_output_dim(inputDim=inputWidth,
@@ -164,11 +205,14 @@ class AvgPoolInfo(LayerInfo):
                  inputChannels: int,
 
                  kernelSize: int,
-                 kernelStride: int
+                 kernelStride: int,
+
+                 layerID: int
                  ):
         super().__init__(operationType='avgpool',
                          outputFracBits=outputFracBits,
-                         outputRelu=outputRelu)
+                         outputRelu=outputRelu,
+                         layerID=layerID)
 
         self.outputChannels = inputChannels
         self.outputWidth = find_conv1d_output_dim(inputDim=inputWidth,
@@ -205,11 +249,13 @@ class EltAddInfo(LayerInfo):
                  inputChannels: int,
 
                  inputLeftFracBits: int,
-                 inputRightFracBits: int
+                 inputRightFracBits: int,
+                 layerID: int
                  ):
         super().__init__(operationType='eltadd',
                          outputFracBits=outputFracBits,
-                         outputRelu=outputRelu)
+                         outputRelu=outputRelu,
+                         layerID=layerID)
 
         self.outputChannels = inputChannels
         self.outputWidth = inputWidth
@@ -228,7 +274,7 @@ class EltAddInfo(LayerInfo):
 
 class TraceDNN:
     ID_IDX = 0
-    PRECISION_IDX = 0
+    PRECISION_IDX = 1
     def __init__(self, module: nn.Module):
         self.module = module
 
@@ -239,11 +285,15 @@ class TraceDNN:
         # List of handles for forward-hooks. Used to delete the forward hooks after the first run.
         self.hookHandles = []
         # List of layers
-        self.layerList = []
+        self.layerList : List[LayerInfo] = []
         # Input adjacency list of registered layer. The inputs of a given layer
         self.inputAdjacencies = []
         # Output adjacency list of registered layers. The outputs of a given layer
         self.outputAdjacencies = []
+
+        self.parameterCount: int = 0
+        self.parameters: List[T] = []
+        self.parameterKeys: List[str] = []
 
     def reset(self):
         self.layerID = 0
@@ -254,6 +304,7 @@ class TraceDNN:
         self.inputAdjacencies.clear()
         self.outputAdjacencies.clear()
         self.resetAnnotation()
+        self.parameterCount = 0
 
     def removeHooks(self):
         for handle in self.hookHandles:
@@ -299,53 +350,110 @@ class TraceDNN:
             module.outputMemoryLocation = None
             module.inputMemoryLocations.clear()
 
-    def annotate(self, numMemBanks: int) -> None:
+    def annotate(self, numMemRegions: int) -> None:
         """
         Annotates memory and sparsification fields of layers in the graph
-        TODO: Finish this
-        :param numMemBanks:
+        :param numMemRegions: Number of memory regions available for scheduling
         :return: None
         """
-        outputConsumedFlags = []
+        self.resetAnnotation()
+        # List[List[bool]]. Used to indicate how many forward edges of each layer have yet been consumed
+        outputConsumedFlags: List[List[bool]] = []
         for i in range(len(self.outputAdjacencies)):
             edges = []
             for j in range(len(self.outputAdjacencies[i])):
                 edges.append(False)
             outputConsumedFlags.append(edges)
 
-        outputMemoryLocations = [-1 for i in range(len(self.layerList))]
+        # Stack of free memory regions. Initialized as a list of banks
+        memoryStack = [i for i in range(numMemRegions)]
 
-        # Prepared a list of banks
-        memoryStack = [i for i in range(numMemBanks)]
-
+        # TODO: The input/output sparse flag annotation mechanism may have some limitations. See descriptions below
+        # Output of a given layer can be sparse if all of the children layers are of type Conv2d or Linear
+        # If at least one of the input cannot be sparse, then we assume none of the inputs can be sparse
         for idx, layer in enumerate(self.layerList):
-            # Try to allocate a spot for the output of the layer
+            # Try to allocate a memory region for the output of the layer
             assert len(memoryStack) > 0, "Cannot allocate another memory region for the output of layer {}!".format(idx)
             outputMemoryLoc = memoryStack.pop()
+            layer.outputMemoryLocation = outputMemoryLoc
 
-            # Deassert one of the consumer flags in the producer
+            # Memory region allocation and deallocation.
+            # Determine whether all the inputs are sparse
             predecessorList = self.inputAdjacencies[idx]
+            sparseInput = True
             for predIdx in predecessorList:
+                # Grab the input memory location and append it to the input memory region list of the current layer
+                inputLayer = self.layerList[predIdx]
+                inputMemoryLoc = inputLayer.outputMemoryLocation
+                assert inputMemoryLoc is not None, 'Input memory location is not allocated!'
+                layer.inputMemoryLocations.append(inputMemoryLoc)
                 outputConsumedFlags[predIdx].pop()
-                if len(outputConsumedFlags[predIdx])==0:
-                    locationToRestore = outputMemoryLocations[predIdx]
-                    assert locationToRestore >= 0, 'Memory location to restore is -1!'
-                    memoryStack.append(locationToRestore)
+                if len(outputConsumedFlags[predIdx]) == 0:
+                    #Push the free region back to the flag
+                    memoryStack.append(inputMemoryLoc)
+                if inputLayer.outputCanBeSparse is False:
+                    sparseInput = False
 
+            layer.sparseInput = sparseInput
 
+            # Determine whether the output of this layer can be sparse by examining the types of the consumer layers
+            outputCanBeSparse = True
+            # Besides the last layer, the other layers should have successors
+            if idx < len(self.outputAdjacencies):
+                successorList = self.outputAdjacencies[idx]
+                for succIdx in successorList:
+                    outputLayer = self.layerList[succIdx]
+                    if isinstance(outputLayer, (nn.Conv2d, nn.Linear)) is False:
+                        outputCanBeSparse = False
+                        break
+            layer.outputCanBeSparse = outputCanBeSparse
 
-
-
-    def dump(self, fileStream=None) -> str:
+    def dumpTrace(self, fileStream) -> str:
         """
-        Dumps the DNN IR in the inserted execution order as a YAML string.
+        Dumps the DNN trace in the inserted execution order as a YAML string.
         If a file stream is provided, the string will be written to the file.
-        :param fileStream: Optional. File stream to dump the YAML string to.
+        :param fileStream: File stream to dump the YAML string to.
         :return: The YAML string
         """
-        pass
+        # Generate
+        return yaml.dump(self.layerList, fileStream)
 
-    def traceHook(self, module, input: T, output: T) -> None:
+    def dumpParameters(self, fileStream) -> str:
+        """
+        Flatten the parameter tensors, join them, and save the values to a yaml file
+        :param fileStream:
+        :return:
+        """
+        parameterDict: dict = {}
+        for idx, blob in enumerate(self.parameters):
+            key = self.parameterKeys[idx]
+            data = blob.view(blob.numel()).tolist()
+            parameterDict[key] = data
+        return yaml.dump(parameterDict, fileStream)
+
+    def dump(self, filePath: str, fileNameBase: str) -> None:
+        """
+        Saves the model trace and parameters as YAML files.
+        Trace file will be saved as filePath/fileNameBase_trace.yaml
+        Parameter file will be saved as filePath/fileNameBase_parameters.yaml
+        :param filePath:
+        :param fileNameBase:
+        :return: None
+        """
+        fullTracePath = os.path.join(filePath, fileNameBase+'_trace.yaml')
+        fullParameterPath = os.path.join(filePath, fileNameBase+'_parameters.yaml')
+        traceFile = open(fullTracePath, 'w')
+        parameterFile = open(fullParameterPath, 'w')
+
+        self.dumpTrace(traceFile)
+        print("Tracer: saved trace to {}".format(fullTracePath))
+        self.dumpParameters(parameterFile)
+        print("Tracer: saved data to {{".format(fullParameterPath))
+
+        traceFile.close()
+        parameterFile.close()
+
+    def traceHook(self, module, input: T, output: T) -> T:
         """
         Pytorch NN module forward hook. Used to intercept NN layer execution order and dependency. This function will be
             called by PyTorch during inference.
@@ -353,40 +461,53 @@ class TraceDNN:
         :param module: The PyTorch NN module to be hooked.
         :param input: Input tensor. Can be a tuple if the module has multiple inputs.
         :param output:
-        :return:
+        :return: The modified output.
         """
         # Modify the output
         # output[0]: layer id of the layer
         # output[1]: INT8 activation precision
 
+        print ("Tracing module {}: {}".format(self.layerID, module))
         # Extract the information: input precision(s), input id
         inputIDs = []
         inputPrecisions = []
         inputChannels = []
         inputHeights = []
         inputWidths = []
-        if isinstance(input, T):
-            nElements = input.numel()
-            idx = input.view(nElements).numpy()[self.ID_IDX]
-            inputIDs.append(idx)
-            inputPrecisions.append(input.view(nElements)[self.PRECISION_IDX])
-            inputChannels.append(self.layerList[idx].outputChannel)
-            inputHeights.append(self.layerList[idx].outputHeight)
-            inputWidths.append(self.layerList[idx].outputWidth)
-        elif isinstance(input, tuple):
-            for tensor in input:
-                nElements = tensor.numel()
-                idx = tensor.view(nElements)[self.ID_IDX]
+        input0FracBits = None
+        outputPrecisionScale = None
+        if isinstance(module, QuantStub) is False:
+            if isinstance(input, T):
+                nElements = input.numel()
+                idx = int(input.view(nElements)[self.ID_IDX].item())
+                print('Input idx: {}'.format(idx))
                 inputIDs.append(idx)
-                inputPrecisions.append(tensor.view(nElements)[self.PRECISION_IDX])
-                inputChannels.append(self.layerList[idx].outputChannel)
+                inputPrecision = input.view(nElements)[self.PRECISION_IDX].item()
+                print('Input precision: {}'.format(inputPrecision))
+                inputPrecisions.append(inputPrecision)
+                inputChannels.append(self.layerList[idx].outputChannels)
                 inputHeights.append(self.layerList[idx].outputHeight)
                 inputWidths.append(self.layerList[idx].outputWidth)
-        else:
-            raise TypeError('The input argument is neither a tensor nor a tuple of tensors')
+            elif isinstance(input, tuple):
+                for tensor in input:
+                    nElements = tensor.numel()
+                    print('Input: {}'.format(tensor.view(nElements)[0:2]))
+                    idx = int(tensor.view(nElements)[self.ID_IDX].item())
+                    print('Input idx: {}'.format(idx))
+                    inputIDs.append(idx)
+                    inputPrecision = tensor.view(nElements)[self.PRECISION_IDX].item()
+                    print('Input precision: {}'.format(inputPrecision))
+                    inputPrecisions.append(tensor.view(nElements)[self.PRECISION_IDX])
+                    inputChannels.append(self.layerList[idx].outputChannels)
+                    inputHeights.append(self.layerList[idx].outputHeight)
+                    inputWidths.append(self.layerList[idx].outputWidth)
+            else:
+                raise TypeError('The input argument is neither a tensor nor a tuple of tensors')
+
+            input0FracBits = torch.round(torch.log2(1.0 / inputPrecisions[0])).view(1)[0].item()
+            outputPrecisionScale = inputPrecisions[0]
 
         # Determine output precision scales
-        outputPrecisionScale = inputPrecisions[0]
         if hasattr(module, 'activation_post_process'):
             outputPrecisionScale = module.activation_post_process.scale.view(1)
         else:
@@ -399,7 +520,7 @@ class TraceDNN:
                 outputPrecisionScale *= 2.0
             else:
                 pass
-        outputFracBits = torch.round(torch.log2(1.0 / outputPrecisionScale)).view(1).numpy()[0]
+        outputFracBits = int(torch.round(torch.log2(1.0 / outputPrecisionScale)).view(1)[0].item())
 
         # Instantiate and insert a layer, register input/output adjacencies
         # If this is a convolution-based layer. Even the fused layer types are Conv2d thanks to inheritance
@@ -407,7 +528,6 @@ class TraceDNN:
         outputChannels = output.size()[1]
         outputRelu = False
 
-        input0FracBits = torch.round(torch.log2(1.0 / inputPrecisions[0])).view(1).numpy()[0]
         if isinstance(module, (nn.Conv2d, nn.Linear)):
             if isinstance(module, (nninstrinsic.ConvReLU2d, nninstrinsic.LinearReLU, nninstrinsic.ConvBnReLU2d)):
                 outputRelu = True
@@ -427,7 +547,8 @@ class TraceDNN:
 
             # Determine weight frac bits
             weightPrecisionScale = module.weight_fake_quant.scale.view(1)
-            weightFracBits = torch.round(torch.log2(1.0 / weightPrecisionScale)).view(1).numpy()[0]
+            weightFracBits = int(torch.round(torch.log2(1.0 / weightPrecisionScale)).view(1)[0].item())
+            hasBias = False if module.bias is None else True
             newLayer = ConvInfo(
                 outputFracBits=int(outputFracBits),
                 outputChannels=outputChannels,
@@ -443,13 +564,32 @@ class TraceDNN:
                 weightFracBits=int(weightFracBits),
                 kernelSize=kernelSize,
                 kernelStride=kernelStride,
+                hasBias=hasBias,
 
-                channelGroups=groups
+                channelGroups=groups,
+                layerID=self.layerID
             )
+
+            # Extract parameters
+            # Extract weights
+            newLayer.weightParameterFileStartPosition = self.parameterCount
+            self.parameterCount += module.weight.numel()
+            self.parameters.append(module.weight)
+            self.parameterKeys.append(str(self.layerID)+'_weight')
+            if hasBias is True:
+                newLayer.biasParameterFileStartPosition = self.parameterCount
+                self.parameterCount += module.bias.numel()
+                self.parameters.append(module.bias)
+                self.parameterKeys.append(str(self.layerID) + '_bias')
+
         # if this is an average pooling layer
         elif isinstance(module, nn.AvgPool2d):
             #Average pooling layer should be seen as a special case of depth-wise convolution layer
-            padding = module.padding[0]
+            padding: int = 0
+            if hasattr(module.padding, '__getitem__'):
+                padding = module.padding[0]
+            else:
+                padding = module.padding
             newLayer = AvgPoolInfo(
                 outputFracBits=outputFracBits,
                 outputRelu=False,
@@ -461,9 +601,16 @@ class TraceDNN:
                 inputChannels=inputChannels[0],
 
                 kernelSize=module.kernel_size,
-                kernelStride=module.stride
+                kernelStride=module.stride,
+
+                layerID=self.layerID
             )
         elif isinstance(module, nn.MaxPool2d):
+            padding: int = 0
+            if hasattr(module.padding, '__getitem__'):
+                padding = module.padding[0]
+            else:
+                padding = module.padding
             padding = module.padding[0]
             newLayer = MaxPoolInfo(
                 outputFracBits=outputFracBits,
@@ -476,13 +623,15 @@ class TraceDNN:
                 inputChannels=inputChannels[0],
 
                 kernelSize=module.kernel_size,
-                kernelStride=module.stride
+                kernelStride=module.stride,
+
+                layerID=self.layerID
             )
         elif isinstance(module, cm.EltwiseAdd):
             assert inputHeights[0] == inputHeights[1], "Input heights do not match for eltwise-add operation"
             assert inputWidths[0] == inputWidths[1], "Input widths do not match for eltwise-add operation"
             assert inputChannels[0] == inputChannels[1], "Input channels do not match for eltwise-add operation"
-            input1FracBits = torch.round(torch.log2(1.0 / inputPrecisions[1])).view(1).numpy()[0]
+            input1FracBits = int(torch.round(torch.log2(1.0 / inputPrecisions[1])).view(1)[0].item())
             newLayer = EltAddInfo(
                 outputFracBits=outputFracBits,
                 outputRelu=module.relu,
@@ -492,10 +641,18 @@ class TraceDNN:
                 inputChannels=inputChannels[0],
 
                 inputLeftFracBits=input0FracBits,
-                inputRightFracBits=input1FracBits
+                inputRightFracBits=input1FracBits,
+
+                layerID=self.layerID
             )
         elif isinstance(module, QuantStub):
-            newLayer = LayerInfo(operationType='input', outputFracBits=outputFracBits, outputRelu=False)
+            newLayer = QuantStubInfo(
+                outputFracBits=outputFracBits,
+                outputChannels=input[0].size()[1],
+                outputHeight=input[0].size()[2],
+                outputWidth=input[0].size()[3],
+                layerID=self.layerID
+            )
         else:
             raise TypeError('The tracer hook can only be applied to QuantStub, Conv2d types, Linear types, AvgPool2d types, '
                             'AvgPool2d, and EltwiseAdd types. Input module type is {}'.format(type(module)))
@@ -514,6 +671,9 @@ class TraceDNN:
 
         self.layerID += 1
         self.layerCount += 1
+
+        print("Layer ID: {} \n Modified output: {}".format(self.layerID-1, output.view(outputNumel)[0:2]))
+        return output
 
     def traceModel(self, input: T) -> None:
         """

@@ -325,7 +325,8 @@ class experimentCifar10ResNet56(experimentBase):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="CIFAR10_ResNet56 experiment")
-    parser.add_argument('--mode', type=str, choices=['train', 'evaluate_sparsity', 'print_model'], default='train',
+    parser.add_argument('--mode', type=str, choices=['train', 'evaluate_sparsity', 'print_model', 'trace_model'],
+                        default='train',
                         help='Mode. Valid choices are train, evaluate_sparsity, and print model')
     parser.add_argument('--config_file', type=str, required=True,
                         help='Path to the experiment configuration file. Required')
@@ -361,3 +362,5 @@ if __name__ == '__main__':
         experiment.save_sparsity_stats(args.override_cluster_size)
     elif args.mode == 'print_model':
         experiment.print_model()
+    elif args.mode == 'trace_model':
+        experiment.trace_model(numMemoryRegions=3)
