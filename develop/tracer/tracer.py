@@ -4,7 +4,7 @@ Package for tracing quantized-pruned models in their PyTorch execution order
 import torch
 from torch import Tensor as T
 from torch import nn as nn
-from torch.nn import intrinsic as nninstrinsic
+from torch.nn.intrinsic import qat as nninstrinsicqat
 from torch.quantization import QuantStub as QuantStub
 
 
@@ -84,6 +84,7 @@ class QuantStubInfo(LayerInfo):
         self.outputChannels = outputChannels
         self.outputHeight = outputHeight
         self.outputWidth = outputWidth
+        self.outputCurrentNumGroups = 1
 
 class ConvInfo(LayerInfo):
     """
@@ -179,7 +180,7 @@ class MaxPoolInfo(LayerInfo):
                                                    inputTransConvPadding=0,
                                                    kernelSize=kernelSize,
                                                    kernelStride=kernelStride)
-        self.outputCurrentNumGroups = inputChannels
+        self.outputCurrentNumGroups = 1
 
         if len(self.inputFracBits) == 0:
             self.inputFracBits.append(inputFracBits)
@@ -225,7 +226,7 @@ class AvgPoolInfo(LayerInfo):
                                                    inputTransConvPadding=0,
                                                    kernelSize=kernelSize,
                                                    kernelStride=kernelStride)
-        self.outputCurrentNumGroups = inputChannels
+        self.outputCurrentNumGroups = 1
 
         if len(self.inputFracBits) == 0:
             self.inputFracBits.append(inputFracBits)
@@ -396,16 +397,24 @@ class TraceDNN:
 
             layer.sparseInput = sparseInput
 
-            # Determine whether the output of this layer can be sparse by examining the types of the consumer layers
+            # Examine the types of the consumer layers
+            # 1) to determine whether the output of this layer can be sparse
+            # 2) To verify the consistency in the next layers' number of channel groups
             outputCanBeSparse = True
+            nextGroupIsConsistent = True
             # Besides the last layer, the other layers should have successors
             if idx < len(self.outputAdjacencies):
                 successorList = self.outputAdjacencies[idx]
+                # print("Layer {}: type {}, successors {}".format(idx, type(self.layerList[idx]), successorList))
                 for succIdx in successorList:
                     outputLayer = self.layerList[succIdx]
-                    if isinstance(outputLayer, (nn.Conv2d, nn.Linear)) is False:
+                    if isinstance(outputLayer, ConvInfo) is False:
                         outputCanBeSparse = False
-                        break
+                    if layer.outputNextNumGroups is None:
+                        layer.outputNextNumGroups = outputLayer.outputCurrentNumGroups
+                    else:
+                        assert layer.outputNextNumGroups == outputLayer.outputCurrentNumGroups, \
+                            'Consumer layer\'s number of channel groups are in consistent. Layer: {}'.format(layer)
             layer.outputCanBeSparse = outputCanBeSparse
 
     def dumpTrace(self, fileStream) -> str:
@@ -415,8 +424,16 @@ class TraceDNN:
         :param fileStream: File stream to dump the YAML string to.
         :return: The YAML string
         """
-        # Generate
-        return yaml.dump(self.layerList, fileStream)
+        # Generate a list of item views
+        layerDict = {}
+        for layer in self.layerList:
+            # Need to convert dict.items() to an actual list, otherwise it is not picklable
+            # See this SO post: https://stackoverflow.com/questions/54658048/typeerror-cant-pickle-dict-items-objects
+            layerDict[layer.layerID] = layer.__dict__
+
+        # We want list to be dumped as in-line format, hence the choice of the default_flow_style
+        # See https://stackoverflow.com/questions/56937691/making-yaml-ruamel-yaml-always-dump-lists-inline
+        return yaml.dump(layerDict, fileStream, default_flow_style=None)
 
     def dumpParameters(self, fileStream) -> str:
         """
@@ -429,7 +446,10 @@ class TraceDNN:
             key = self.parameterKeys[idx]
             data = blob.view(blob.numel()).tolist()
             parameterDict[key] = data
-        return yaml.dump(parameterDict, fileStream)
+
+        # We want list to be dumped as in-line format, hence the choice of the default_flow_style
+        # See https://stackoverflow.com/questions/56937691/making-yaml-ruamel-yaml-always-dump-lists-inline
+        return yaml.dump(parameterDict, fileStream, default_flow_style=None)
 
     def dump(self, filePath: str, fileNameBase: str) -> None:
         """
@@ -448,7 +468,7 @@ class TraceDNN:
         self.dumpTrace(traceFile)
         print("Tracer: saved trace to {}".format(fullTracePath))
         self.dumpParameters(parameterFile)
-        print("Tracer: saved data to {{".format(fullParameterPath))
+        print("Tracer: saved data to {}".format(fullParameterPath))
 
         traceFile.close()
         parameterFile.close()
@@ -467,7 +487,7 @@ class TraceDNN:
         # output[0]: layer id of the layer
         # output[1]: INT8 activation precision
 
-        print ("Tracing module {}: {}".format(self.layerID, module))
+        #print ("Tracing module {}. Type; {}. {}".format(self.layerID, type(module), module))
         # Extract the information: input precision(s), input id
         inputIDs = []
         inputPrecisions = []
@@ -480,10 +500,10 @@ class TraceDNN:
             if isinstance(input, T):
                 nElements = input.numel()
                 idx = int(input.view(nElements)[self.ID_IDX].item())
-                print('Input idx: {}'.format(idx))
+                # print('Input idx: {}'.format(idx))
                 inputIDs.append(idx)
                 inputPrecision = input.view(nElements)[self.PRECISION_IDX].item()
-                print('Input precision: {}'.format(inputPrecision))
+                # print('Input precision: {}'.format(inputPrecision))
                 inputPrecisions.append(inputPrecision)
                 inputChannels.append(self.layerList[idx].outputChannels)
                 inputHeights.append(self.layerList[idx].outputHeight)
@@ -491,12 +511,12 @@ class TraceDNN:
             elif isinstance(input, tuple):
                 for tensor in input:
                     nElements = tensor.numel()
-                    print('Input: {}'.format(tensor.view(nElements)[0:2]))
+                    # print('Input: {}'.format(tensor.view(nElements)[0:2]))
                     idx = int(tensor.view(nElements)[self.ID_IDX].item())
-                    print('Input idx: {}'.format(idx))
+                    # print('Input idx: {}'.format(idx))
                     inputIDs.append(idx)
                     inputPrecision = tensor.view(nElements)[self.PRECISION_IDX].item()
-                    print('Input precision: {}'.format(inputPrecision))
+                    # print('Input precision: {}'.format(inputPrecision))
                     inputPrecisions.append(tensor.view(nElements)[self.PRECISION_IDX])
                     inputChannels.append(self.layerList[idx].outputChannels)
                     inputHeights.append(self.layerList[idx].outputHeight)
@@ -517,7 +537,13 @@ class TraceDNN:
                 # Number of fraction bits new = log2(1/scale_new) = number of fraction bits - 1 = log2(1/scale) - 1
                 # log2(scale) + 1 = log2(scale_new)
                 # scale_new = 2 * scale
-                outputPrecisionScale *= 2.0
+                iprecision0 = inputPrecisions[0].view(1)[0].item()
+                iprecision1 = inputPrecisions[1].view(1)[0].item()
+                import math
+                if  math.isclose(iprecision0, iprecision1):
+                    outputPrecisionScale *= 2.0
+                else:
+                    outputPrecisionScale = torch.tensor(iprecision1) if iprecision1 > iprecision0 else torch.tensor(iprecision0)
             else:
                 pass
         outputFracBits = int(torch.round(torch.log2(1.0 / outputPrecisionScale)).view(1)[0].item())
@@ -529,7 +555,7 @@ class TraceDNN:
         outputRelu = False
 
         if isinstance(module, (nn.Conv2d, nn.Linear)):
-            if isinstance(module, (nninstrinsic.ConvReLU2d, nninstrinsic.LinearReLU, nninstrinsic.ConvBnReLU2d)):
+            if isinstance(module, (nninstrinsicqat.ConvReLU2d, nninstrinsicqat.LinearReLU, nninstrinsicqat.ConvBnReLU2d)):
                 outputRelu = True
 
             # Determine padding and kernel size
@@ -594,7 +620,7 @@ class TraceDNN:
                 outputFracBits=outputFracBits,
                 outputRelu=False,
 
-                inputFracBits=input0FracBits,
+                inputFracBits=int(input0FracBits),
                 inputHeight=inputHeights[0],
                 inputWidth=inputWidths[0],
                 inputBorderPadding=padding,
@@ -616,7 +642,7 @@ class TraceDNN:
                 outputFracBits=outputFracBits,
                 outputRelu=False,
 
-                inputFracBits=input0FracBits,
+                inputFracBits=int(input0FracBits),
                 inputHeight=inputHeights[0],
                 inputWidth=inputWidths[0],
                 inputBorderPadding=padding,
@@ -640,8 +666,8 @@ class TraceDNN:
                 inputWidth=inputWidths[0],
                 inputChannels=inputChannels[0],
 
-                inputLeftFracBits=input0FracBits,
-                inputRightFracBits=input1FracBits,
+                inputLeftFracBits=int(input0FracBits),
+                inputRightFracBits=int(input1FracBits),
 
                 layerID=self.layerID
             )
@@ -672,10 +698,10 @@ class TraceDNN:
         self.layerID += 1
         self.layerCount += 1
 
-        print("Layer ID: {} \n Modified output: {}".format(self.layerID-1, output.view(outputNumel)[0:2]))
+        # print("Layer ID: {} \n Modified output: {}".format(self.layerID-1, output.view(outputNumel)[0:2]))
         return output
 
-    def traceModel(self, input: T) -> None:
+    def traceModel(self, input: T) -> T:
         """
         Applies the tracing hooks to the model, run the model once, and remove the hooks.
         :return: None
@@ -702,6 +728,8 @@ class TraceDNN:
 
         # 4. Remove the hooks
         self.removeHooks()
+
+        return output
 
 
 
