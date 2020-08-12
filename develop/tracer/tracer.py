@@ -6,6 +6,7 @@ from torch import Tensor as T
 from torch import nn as nn
 from torch.nn.intrinsic import qat as nninstrinsicqat
 from torch.quantization import QuantStub as QuantStub
+from torch.quantization import DeQuantStub as DeQuantStub
 
 
 import custom_modules.custom_modules as cm
@@ -85,6 +86,25 @@ class QuantStubInfo(LayerInfo):
         self.outputHeight = outputHeight
         self.outputWidth = outputWidth
         self.outputCurrentNumGroups = 1
+
+class DeQuantStubInfo(LayerInfo):
+    def __init__(self,
+                 inputFracBits: int,
+                 inputChannels: int,
+                 inputHeight: int,
+                 inputWidth: int,
+                 layerID: int
+                 ):
+        super().__init__(operationType='dequantstub',
+                         outputFracBits=inputFracBits,
+                         outputRelu=False,
+                         layerID=layerID)
+        self.outputChannels = inputChannels
+        self.outputHeight = inputHeight
+        self.outputWidth = inputWidth
+        self.inputFracBits.append(inputFracBits)
+        self.outputCurrentNumGroups = 1
+        self.outputNextNumGroups = 1
 
 class ConvInfo(LayerInfo):
     """
@@ -326,7 +346,7 @@ class TraceDNN:
         :param sinkLayerId: Id of the layer that receives the tensor during inference.
         :return: None
         """
-        while len(self.outputAdjacencies) <= sourceLayerId:
+        while len(self.outputAdjacencies) <= sinkLayerId:
             self.outputAdjacencies.append([])
         self.outputAdjacencies[sourceLayerId].append(sinkLayerId)
 
@@ -373,11 +393,6 @@ class TraceDNN:
         # Output of a given layer can be sparse if all of the children layers are of type Conv2d or Linear
         # If at least one of the input cannot be sparse, then we assume none of the inputs can be sparse
         for idx, layer in enumerate(self.layerList):
-            # Try to allocate a memory region for the output of the layer
-            assert len(memoryStack) > 0, "Cannot allocate another memory region for the output of layer {}!".format(idx)
-            outputMemoryLoc = memoryStack.pop()
-            layer.outputMemoryLocation = outputMemoryLoc
-
             # Memory region allocation and deallocation.
             # Determine whether all the inputs are sparse
             predecessorList = self.inputAdjacencies[idx]
@@ -401,11 +416,17 @@ class TraceDNN:
             # 1) to determine whether the output of this layer can be sparse
             # 2) To verify the consistency in the next layers' number of channel groups
             outputCanBeSparse = True
-            nextGroupIsConsistent = True
-            # Besides the last layer, the other layers should have successors
-            if idx < len(self.outputAdjacencies):
-                successorList = self.outputAdjacencies[idx]
-                # print("Layer {}: type {}, successors {}".format(idx, type(self.layerList[idx]), successorList))
+            layer.outputMemoryLocation = -1
+
+            successorList = self.outputAdjacencies[idx]
+            # print("Layer {}: type {}, successors {}".format(idx, type(self.layerList[idx]), successorList))
+            if len(successorList) > 0:
+                # Try to allocate a memory region for the output of the layer
+                assert len(memoryStack) > 0, \
+                    "Cannot allocate another memory region for the output of layer {}!".format(idx)
+                outputMemoryLoc = memoryStack.pop()
+                layer.outputMemoryLocation = outputMemoryLoc
+
                 for succIdx in successorList:
                     outputLayer = self.layerList[succIdx]
                     if isinstance(outputLayer, ConvInfo) is False:
@@ -415,6 +436,10 @@ class TraceDNN:
                     else:
                         assert layer.outputNextNumGroups == outputLayer.outputCurrentNumGroups, \
                             'Consumer layer\'s number of channel groups are in consistent. Layer: {}'.format(layer)
+
+            if isinstance(layer, DeQuantStubInfo):
+                outputCanBeSparse = False
+
             layer.outputCanBeSparse = outputCanBeSparse
 
     def dumpTrace(self, fileStream) -> str:
@@ -487,7 +512,7 @@ class TraceDNN:
         # output[0]: layer id of the layer
         # output[1]: INT8 activation precision
 
-        #print ("Tracing module {}. Type; {}. {}".format(self.layerID, type(module), module))
+        print ("Tracing module {}. Type; {}. {}".format(self.layerID, type(module), module))
         # Extract the information: input precision(s), input id
         inputIDs = []
         inputPrecisions = []
@@ -679,6 +704,14 @@ class TraceDNN:
                 outputWidth=input[0].size()[3],
                 layerID=self.layerID
             )
+        elif isinstance(module, DeQuantStub):
+            newLayer = DeQuantStubInfo(
+                inputFracBits=int(input0FracBits),
+                inputChannels=input[0].size()[1],
+                inputHeight=input[0].size()[2] if len(input[0].size()) > 2 else 1,
+                inputWidth=input[0].size()[3] if len(input[0].size()) > 2 else 1,
+                layerID=self.layerID
+            )
         else:
             raise TypeError('The tracer hook can only be applied to QuantStub, Conv2d types, Linear types, AvgPool2d types, '
                             'AvgPool2d, and EltwiseAdd types. Input module type is {}'.format(type(module)))
@@ -714,7 +747,7 @@ class TraceDNN:
         while len(stack) > 0:
             module = stack.pop()
             # If module is a leaf, then add to the graph
-            if isinstance(module, (QuantStub, cm.EltwiseAdd, nn.Conv2d, nn.Linear, nn.MaxPool2d, nn.AvgPool2d)):
+            if isinstance(module, (QuantStub, DeQuantStub, cm.EltwiseAdd, nn.Conv2d, nn.Linear, nn.MaxPool2d, nn.AvgPool2d)):
                 handle = module.register_forward_hook(self.traceHook)
                 self.hookHandles.append(handle)
             # If the module is not a leaf, then push its children onto the stack
