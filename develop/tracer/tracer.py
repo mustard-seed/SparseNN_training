@@ -627,11 +627,17 @@ class TraceDNN:
             self.parameterCount += module.weight.numel()
             self.parameters.append(module.weight)
             self.parameterKeys.append(str(self.layerID)+'_weight')
+
+            newLayer.biasParameterFileStartPosition = self.parameterCount
+            self.parameterCount += outputChannels
+            self.parameterKeys.append(str(self.layerID) + '_bias')
+            bias = None
             if hasBias is True:
-                newLayer.biasParameterFileStartPosition = self.parameterCount
-                self.parameterCount += module.bias.numel()
-                self.parameters.append(module.bias)
-                self.parameterKeys.append(str(self.layerID) + '_bias')
+                bias = module.bias
+            else:
+                bias = torch.zeros([outputChannels])
+
+            self.parameters.append(bias)
 
         # if this is an average pooling layer
         elif isinstance(module, nn.AvgPool2d):
