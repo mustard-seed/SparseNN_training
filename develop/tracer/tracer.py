@@ -66,6 +66,9 @@ class LayerInfo(edict):
         self.sparseInput: bool = False
 
         self.inputFracBits: List[int] = []
+        self.inputChannels: List[int] = []
+        self.inputHeights:  List[int] = []
+        self.inputWidths: List[int] = []
         self.inputMemoryLocations: List[int] = []
 
         self.layerID = layerID
@@ -87,6 +90,10 @@ class QuantStubInfo(LayerInfo):
         self.outputWidth = outputWidth
         self.outputCurrentNumGroups = 1
 
+        self.inputChannels.append(outputChannels)
+        self.inputHeights.append(outputHeight)
+        self.inputWidths.append(outputWidth)
+
 class DeQuantStubInfo(LayerInfo):
     def __init__(self,
                  inputFracBits: int,
@@ -105,6 +112,10 @@ class DeQuantStubInfo(LayerInfo):
         self.inputFracBits.append(inputFracBits)
         self.outputCurrentNumGroups = 1
         self.outputNextNumGroups = 1
+
+        self.inputChannels.append(inputChannels)
+        self.inputHeights.append(inputHeight)
+        self.inputWidths.append(inputWidth)
 
 class ConvInfo(LayerInfo):
     """
@@ -151,11 +162,11 @@ class ConvInfo(LayerInfo):
             self.inputFracBits.append(inputFracBits)
         else:
             self.inputFracBits[0] = inputFracBits
-        self.inputHeight = inputHeight
-        self.inputWidth = inputWidth
+        self.inputChannels.append(inputChannels)
+        self.inputHeights.append(inputHeight)
+        self.inputWidths.append(inputWidth)
         self.inputBorderPadding = inputBorderPadding
         self.inputTransConvPadding = inputTransConvPadding
-        self.inputChannels = inputChannels
 
         self.weightFracBits = weightFracBits
         self.kernelSize = kernelSize
@@ -206,10 +217,10 @@ class MaxPoolInfo(LayerInfo):
             self.inputFracBits.append(inputFracBits)
         else:
             self.inputFracBits[0] = inputFracBits
-        self.inputHeight = inputHeight
-        self.inputWidth = inputWidth
+        self.inputChannels.append(inputChannels)
+        self.inputHeights.append(inputHeight)
+        self.inputWidths.append(inputWidth)
         self.inputBorderPadding = inputBorderPadding
-        self.channels = inputChannels
 
         self.kernelSize = kernelSize
         self.kernelStride = kernelStride
@@ -227,6 +238,8 @@ class AvgPoolInfo(LayerInfo):
 
                  kernelSize: int,
                  kernelStride: int,
+
+                 divisor: int,
 
                  layerID: int
                  ):
@@ -252,13 +265,15 @@ class AvgPoolInfo(LayerInfo):
             self.inputFracBits.append(inputFracBits)
         else:
             self.inputFracBits[0] = inputFracBits
-        self.inputHeight = inputHeight
-        self.inputWidth = inputWidth
+        self.inputChannels.append(inputChannels)
+        self.inputHeights.append(inputHeight)
+        self.inputWidths.append(inputWidth)
         self.inputBorderPadding = inputBorderPadding
-        self.channels = inputChannels
 
         self.kernelSize = kernelSize
         self.kernelStride = kernelStride
+
+        self.divisor = divisor
 
 class EltAddInfo(LayerInfo):
     def __init__(self,
@@ -289,9 +304,10 @@ class EltAddInfo(LayerInfo):
         else:
             self.inputFracBits[0] = inputLeftFracBits
             self.inputFracBits[1] = inputRightFracBits
-        self.inputHeight = inputHeight
-        self.inputWidth = inputWidth
-        self.channels = inputChannels
+        for i in range(2):
+            self.inputChannels.append(inputChannels)
+            self.inputHeights.append(inputHeight)
+            self.inputWidths.append(inputWidth)
 
 class TraceDNN:
     ID_IDX = 0
@@ -394,23 +410,6 @@ class TraceDNN:
         # If at least one of the input cannot be sparse, then we assume none of the inputs can be sparse
         for idx, layer in enumerate(self.layerList):
             # Memory region allocation and deallocation.
-            # Determine whether all the inputs are sparse
-            predecessorList = self.inputAdjacencies[idx]
-            sparseInput = True
-            for predIdx in predecessorList:
-                # Grab the input memory location and append it to the input memory region list of the current layer
-                inputLayer = self.layerList[predIdx]
-                inputMemoryLoc = inputLayer.outputMemoryLocation
-                assert inputMemoryLoc is not None, 'Input memory location is not allocated!'
-                layer.inputMemoryLocations.append(inputMemoryLoc)
-                outputConsumedFlags[predIdx].pop()
-                if len(outputConsumedFlags[predIdx]) == 0:
-                    #Push the free region back to the flag
-                    memoryStack.append(inputMemoryLoc)
-                if inputLayer.outputCanBeSparse is False:
-                    sparseInput = False
-
-            layer.sparseInput = sparseInput
 
             # Examine the types of the consumer layers
             # 1) to determine whether the output of this layer can be sparse
@@ -441,6 +440,24 @@ class TraceDNN:
                 outputCanBeSparse = False
 
             layer.outputCanBeSparse = outputCanBeSparse
+
+            # Determine whether all the inputs are sparse and dellocate used up inputs
+            predecessorList = self.inputAdjacencies[idx]
+            sparseInput = True
+            for predIdx in predecessorList:
+                # Grab the input memory location and append it to the input memory region list of the current layer
+                inputLayer = self.layerList[predIdx]
+                inputMemoryLoc = inputLayer.outputMemoryLocation
+                assert inputMemoryLoc is not None, 'Input memory location is not allocated!'
+                layer.inputMemoryLocations.append(inputMemoryLoc)
+                outputConsumedFlags[predIdx].pop()
+                if len(outputConsumedFlags[predIdx]) == 0:
+                    # Push the free region back to the flag
+                    memoryStack.append(inputMemoryLoc)
+                if inputLayer.outputCanBeSparse is False:
+                    sparseInput = False
+
+            layer.sparseInput = sparseInput
 
     def dumpTrace(self, fileStream) -> str:
         """
@@ -562,13 +579,14 @@ class TraceDNN:
                 # Number of fraction bits new = log2(1/scale_new) = number of fraction bits - 1 = log2(1/scale) - 1
                 # log2(scale) + 1 = log2(scale_new)
                 # scale_new = 2 * scale
-                iprecision0 = inputPrecisions[0].view(1)[0].item()
-                iprecision1 = inputPrecisions[1].view(1)[0].item()
-                import math
-                if  math.isclose(iprecision0, iprecision1):
-                    outputPrecisionScale *= 2.0
-                else:
-                    outputPrecisionScale = torch.tensor(iprecision1) if iprecision1 > iprecision0 else torch.tensor(iprecision0)
+                # iprecision0 = inputPrecisions[0].view(1)[0].item()
+                # iprecision1 = inputPrecisions[1].view(1)[0].item()
+                # import math
+                # if  math.isclose(iprecision0, iprecision1):
+                #     outputPrecisionScale *= 2.0
+                # else:
+                #     outputPrecisionScale = torch.tensor(iprecision1) if iprecision1 > iprecision0 else torch.tensor(iprecision0)
+                outputPrecisionScale = module.quant.activation_post_process.scale.view(1)
             else:
                 pass
         outputFracBits = int(torch.round(torch.log2(1.0 / outputPrecisionScale)).view(1)[0].item())
@@ -659,6 +677,8 @@ class TraceDNN:
 
                 kernelSize=module.kernel_size,
                 kernelStride=module.stride,
+
+                divisor=module.divisor_override,
 
                 layerID=self.layerID
             )

@@ -1,6 +1,8 @@
 import torch.nn as nn
 import torch
 
+from torch.quantization import QuantStub, DeQuantStub
+
 
 class ConvBNReLU(nn.Sequential):
     """
@@ -69,11 +71,14 @@ class EltwiseAdd(nn.Module):
     def __init__(self, relu=False):
         super().__init__()
         self.relu = relu
+        self.quant = QuantStub()
 
     def forward(self, left_input: torch.Tensor, right_input: torch.Tensor) -> torch.Tensor:
         output = left_input + right_input
         if self.relu is True:
             output = torch.nn.functional.relu(output)
+        # New addition on 20200820: Quantize the output
+        output = self.quant(output)
 
         return output
 
