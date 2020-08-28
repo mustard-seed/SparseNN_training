@@ -688,7 +688,6 @@ class TraceDNN:
                 padding = module.padding[0]
             else:
                 padding = module.padding
-            padding = module.padding[0]
             newLayer = MaxPoolInfo(
                 outputFracBits=outputFracBits,
                 outputRelu=False,
