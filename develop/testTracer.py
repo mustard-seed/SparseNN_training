@@ -185,13 +185,14 @@ class TracerTest():
         else:
             dummyInput = torch.randn(size=[1, 4, 8, 8])
 
-        dummyOutput = tracer.traceModel(dummyInput)
+        tracer.traceModel(dummyInput)
         tracer.annotate(numMemRegions=3)
         tracer.dump(dirname, fileBaseName)
 
         """
-        Saves the input and output
+        Run inference again to save the input and output
         """
+        dummyOutput = self.model(dummyInput)
         print("Saves the dummy input and output")
         inputArray = dummyInput.view(dummyInput.numel()).tolist()
         outputArray = dummyOutput.view(dummyOutput.numel()).tolist()
