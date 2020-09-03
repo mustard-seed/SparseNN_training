@@ -574,7 +574,7 @@ class TraceDNN:
         if hasattr(module, 'activation_post_process'):
             outputPrecisionScale = module.activation_post_process.scale.view(1)
         else:
-            if isinstance(module, (cm.EltwiseAdd, cm.MaxPool2dRelu)):
+            if isinstance(module, (cm.EltwiseAdd, cm.MaxPool2dRelu, cm.AvgPool2dRelu)):
                 # Number of fraction bits = log2(1/scale)
                 # Number of interger bits = 8 - number of fraction bits
                 # Number of fraction bits new = log2(1/scale_new) = number of fraction bits - 1 = log2(1/scale) - 1
@@ -589,7 +589,6 @@ class TraceDNN:
                 #     outputPrecisionScale = torch.tensor(iprecision1) if iprecision1 > iprecision0 else torch.tensor(iprecision0)
                 outputPrecisionScale = module.quant.activation_post_process.scale.view(1)
             else:
-                # TODO: Handle max-pooling layers
                 pass
         outputFracBits = int(torch.round(torch.log2(1.0 / outputPrecisionScale)).view(1)[0].item())
 
@@ -660,7 +659,7 @@ class TraceDNN:
             self.parameters.append(bias)
 
         # if this is an average pooling layer
-        elif isinstance(module, nn.AvgPool2d):
+        elif isinstance(module, cm.AvgPool2dRelu):
             #Average pooling layer should be seen as a special case of depth-wise convolution layer
             padding: int = 0
             if hasattr(module.padding, '__getitem__'):

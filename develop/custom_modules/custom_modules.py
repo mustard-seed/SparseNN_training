@@ -99,6 +99,22 @@ class MaxPool2dRelu(nn.MaxPool2d):
 
         return output
 
+class AvgPool2dRelu(nn.AvgPool2d):
+    def __init__(self, kernel_size, stride=None, padding=0, ceil_mode=False,
+                 count_include_pad=True, divisor_override=None, relu=False):
+        super().__init__(kernel_size, stride, padding, ceil_mode,
+                 count_include_pad, divisor_override)
+        self.relu = relu
+        self.quant = QuantStub()
+
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        output = super().forward(input)
+        if self.relu is True:
+            output = torch.nn.functional.relu(output)
+        output = self.quant(output)
+
+        return output
+
 class Flatten(nn.Module):
     def __init__(self):
         super().__init__()

@@ -177,8 +177,8 @@ class ResNet(nn.Module):
         self.relu = nn.ReLU(inplace=True)
         self.maxpoolrelu = cm.MaxPool2dRelu(kernel_size=3, stride=2, padding=1, relu=True) if family == 'imagenet1k' else None
         self.fc = nn.Linear(self.fc_input_number, self.num_classes)
-        self.averagePool = nn.AvgPool2d(kernel_size=7, divisor_override=32) if family == 'imagenet1k' \
-            else nn.AvgPool2d(kernel_size=8, divisor_override=64)
+        self.averagePool = cm.AvgPool2dRelu(kernel_size=7, divisor_override=32, relu=False) if family == 'imagenet1k' \
+            else cm.AvgPool2dRelu(kernel_size=8, divisor_override=64, relu=False)
 
         self.stage1 = self._make_stage(
                 block=block,

@@ -37,7 +37,7 @@ class TinyNet(nn.Module):
     def __init__(self):
         super().__init__()
         self.block = resnet.BasicBlock(in_planes=4, planes=8, stride=1)
-        self.averagePool = nn.AvgPool2d(kernel_size=8, divisor_override=64)
+        self.averagePool = cm.AvgPool2dRelu(kernel_size=8, divisor_override=64)
         self.quant = QuantStub()
         self.dequant = DeQuantStub()
         for m in self.modules():
@@ -116,9 +116,6 @@ class MaxPool(nn.Module):
         return output
 
 class Add(nn.Module):
-    """
-    Tiny-Net just for generating a trace purpose
-    """
     def __init__(self):
         super().__init__()
         self.block = cm.EltwiseAdd(relu=True)
@@ -130,6 +127,20 @@ class Add(nn.Module):
         x = self.quant0(x)
         y = self.quant1(y)
         output = self.block(x, y)
+        output = self.dequant(output)
+
+        return output
+
+class AvgPool2d(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.block = cm.AvgPool2dRelu(kernel_size=8, stride=8, divisor_override=64, relu=False)
+        self.quant = QuantStub()
+        self.dequant = DeQuantStub()
+
+    def forward(self, x):
+        x = self.quant(x)
+        output = self.block(x)
         output = self.dequant(output)
 
         return output
@@ -148,6 +159,8 @@ class TracerTest():
             self.model = MaxPool()
         elif self.mode == 'add':
             self.model = Add()
+        elif self.mode == "avg":
+            self.model = AvgPool2d()
         else:
             print(self.mode)
             raise ValueError('Unsupported mode')
@@ -202,11 +215,12 @@ class TracerTest():
     def trace(self, dirname: str, fileBaseName: str):
         tracer = Tracer(self.model)
         if self.mode == 'resnet':
-            dummyInput = torch.randn(size=[1, 3, 32, 32])
+            dummyInput = torch.rand(size=[1, 3, 32, 32]) * (-1.0) + 4.0
         elif self.mode == 'add':
-            dummyInput = (torch.randn(size=[1, 4, 8, 8]), torch.randn(size=[1, 4, 8, 8]))
+            dummyInput = (torch.rand(size=[1, 4, 8, 8]) * (-1.0) + 4.0,
+                          torch.rand(size=[1, 4, 8, 8]) * (-1.0) + 4.0)
         else:
-            dummyInput = torch.randn(size=[1, 4, 8, 8])
+            dummyInput = torch.rand(size=[1, 4, 8, 8]) * (-1.0) + 4.0
 
         tracer.traceModel(dummyInput)
         tracer.annotate(numMemRegions=3)
@@ -246,8 +260,8 @@ class TracerTest():
 
 if __name__=='__main__':
     parser = argparse.ArgumentParser(description="testTracer")
-    parser.add_argument('--mode', type=str, choices=['resnet', 'tiny', 'conv', 'maxpool', 'add'], default='conv',
-                        help='Mode. Valid choices are resnet, tiny, conv, maxpool, and add')
+    parser.add_argument('--mode', type=str, choices=['resnet', 'tiny', 'conv', 'maxpool', 'add', 'avg'], default='conv',
+                        help='Mode. Valid choices are resnet, tiny, conv, maxpool, add, and avg')
     args = parser.parse_args()
 
     torch.manual_seed(0)
@@ -261,6 +275,8 @@ if __name__=='__main__':
         fileBaseName = 'mp'
     elif args.mode == 'add':
         fileBaseName = 'add'
+    elif args.mode == 'avg':
+        fileBaseName = 'avg'
     else:
         print(args.mode)
         raise ValueError("Unsupported mode")
