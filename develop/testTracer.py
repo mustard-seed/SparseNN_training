@@ -104,7 +104,7 @@ class MaxPool(nn.Module):
     """
     def __init__(self):
         super().__init__()
-        self.block = nn.MaxPool2d(kernel_size=3, stride=1, padding=1)
+        self.block = cm.MaxPool2dRelu(kernel_size=3, stride=1, padding=1, relu=True)
         self.quant = QuantStub()
         self.dequant = DeQuantStub()
 
@@ -112,6 +112,25 @@ class MaxPool(nn.Module):
         x = self.quant(x)
         x = self.block(x)
         output = self.dequant(x)
+
+        return output
+
+class Add(nn.Module):
+    """
+    Tiny-Net just for generating a trace purpose
+    """
+    def __init__(self):
+        super().__init__()
+        self.block = cm.EltwiseAdd(relu=True)
+        self.quant0 = QuantStub()
+        self.quant1 = QuantStub()
+        self.dequant = DeQuantStub()
+
+    def forward(self, x, y):
+        x = self.quant0(x)
+        y = self.quant1(y)
+        output = self.block(x, y)
+        output = self.dequant(output)
 
         return output
 
@@ -127,6 +146,8 @@ class TracerTest():
             self.model = Conv()
         elif self.mode == 'maxpool':
             self.model = MaxPool()
+        elif self.mode == 'add':
+            self.model = Add()
         else:
             print(self.mode)
             raise ValueError('Unsupported mode')
@@ -182,6 +203,8 @@ class TracerTest():
         tracer = Tracer(self.model)
         if self.mode == 'resnet':
             dummyInput = torch.randn(size=[1, 3, 32, 32])
+        elif self.mode == 'add':
+            dummyInput = (torch.randn(size=[1, 4, 8, 8]), torch.randn(size=[1, 4, 8, 8]))
         else:
             dummyInput = torch.randn(size=[1, 4, 8, 8])
 
@@ -192,15 +215,29 @@ class TracerTest():
         """
         Run inference again to save the input and output
         """
-        dummyOutput = self.model(dummyInput)
+        if isinstance(dummyInput, tuple):
+            dummyOutput = self.model(*dummyInput)
+        else:
+            dummyOutput = self.model(dummyInput)
+        #dummyOutput = self.model(dummyInput)
         print("Saves the dummy input and output")
-        inputArray = dummyInput.view(dummyInput.numel()).tolist()
-        outputArray = dummyOutput.view(dummyOutput.numel()).tolist()
         blobPath = os.path.join(dirname, fileBaseName + '_inout.yaml')
         blobFile = open(blobPath, 'w')
         blobDict: dict = {}
 
-        blobDict['input'] = inputArray
+        # Save inputs
+        if isinstance(dummyInput, tuple):
+            id = 0
+            for input in dummyInput:
+                idText = 'input_'+str(id)
+                blobDict[idText] = input.view(input.numel()).tolist()
+                id += 1
+        else:
+            inputArray = dummyInput.view(dummyInput.numel()).tolist()
+            blobDict['input'] = inputArray
+
+        # save outputs
+        outputArray = dummyOutput.view(dummyOutput.numel()).tolist()
         blobDict['output'] = outputArray
 
         # We want list to be dumped as in-line format, hence the choice of the default_flow_style
@@ -209,8 +246,8 @@ class TracerTest():
 
 if __name__=='__main__':
     parser = argparse.ArgumentParser(description="testTracer")
-    parser.add_argument('--mode', type=str, choices=['resnet', 'tiny', 'conv', 'maxpool'], default='conv',
-                        help='Mode. Valid choices are resnet, tiny, conv, and maxpool')
+    parser.add_argument('--mode', type=str, choices=['resnet', 'tiny', 'conv', 'maxpool', 'add'], default='conv',
+                        help='Mode. Valid choices are resnet, tiny, conv, maxpool, and add')
     args = parser.parse_args()
 
     torch.manual_seed(0)
@@ -222,6 +259,8 @@ if __name__=='__main__':
         fileBaseName = 'convTrace'
     elif args.mode == 'maxpool':
         fileBaseName = 'mp'
+    elif args.mode == 'add':
+        fileBaseName = 'add'
     else:
         print(args.mode)
         raise ValueError("Unsupported mode")

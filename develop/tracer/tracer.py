@@ -12,7 +12,7 @@ from torch.quantization import DeQuantStub as DeQuantStub
 import custom_modules.custom_modules as cm
 import quantization.quantization as qt
 
-from typing import List, Union
+from typing import List, Union, Tuple
 from easydict import EasyDict as edict
 import yaml
 import os
@@ -515,11 +515,12 @@ class TraceDNN:
         traceFile.close()
         parameterFile.close()
 
-    def traceHook(self, module, input: T, output: T) -> T:
+    def traceHook(self, module, input: Union[T, Tuple[T, T]], output: T) -> T:
         """
         Pytorch NN module forward hook. Used to intercept NN layer execution order and dependency. This function will be
             called by PyTorch during inference.
         TODO: Add support for transposed convolution
+        TODO: Add support fof MaxPool2d properly
         :param module: The PyTorch NN module to be hooked.
         :param input: Input tensor. Can be a tuple if the module has multiple inputs.
         :param output:
@@ -573,7 +574,7 @@ class TraceDNN:
         if hasattr(module, 'activation_post_process'):
             outputPrecisionScale = module.activation_post_process.scale.view(1)
         else:
-            if isinstance(module, cm.EltwiseAdd):
+            if isinstance(module, (cm.EltwiseAdd, cm.MaxPool2dRelu)):
                 # Number of fraction bits = log2(1/scale)
                 # Number of interger bits = 8 - number of fraction bits
                 # Number of fraction bits new = log2(1/scale_new) = number of fraction bits - 1 = log2(1/scale) - 1
@@ -588,6 +589,7 @@ class TraceDNN:
                 #     outputPrecisionScale = torch.tensor(iprecision1) if iprecision1 > iprecision0 else torch.tensor(iprecision0)
                 outputPrecisionScale = module.quant.activation_post_process.scale.view(1)
             else:
+                # TODO: Handle max-pooling layers
                 pass
         outputFracBits = int(torch.round(torch.log2(1.0 / outputPrecisionScale)).view(1)[0].item())
 
@@ -682,7 +684,7 @@ class TraceDNN:
 
                 layerID=self.layerID
             )
-        elif isinstance(module, nn.MaxPool2d):
+        elif isinstance(module, cm.MaxPool2dRelu):
             padding: int = 0
             if hasattr(module.padding, '__getitem__'):
                 padding = module.padding[0]
@@ -690,7 +692,7 @@ class TraceDNN:
                 padding = module.padding
             newLayer = MaxPoolInfo(
                 outputFracBits=outputFracBits,
-                outputRelu=False,
+                outputRelu=module.relu,
 
                 inputFracBits=int(input0FracBits),
                 inputHeight=inputHeights[0],
@@ -759,7 +761,7 @@ class TraceDNN:
         # print("Layer ID: {} \n Modified output: {}".format(self.layerID-1, output.view(outputNumel)[0:2]))
         return output
 
-    def traceModel(self, input: T) -> T:
+    def traceModel(self, input: Union[T, Tuple[T, T]]) -> T:
         """
         Applies the tracing hooks to the model, run the model once, and remove the hooks.
         :return: None
@@ -772,7 +774,7 @@ class TraceDNN:
         while len(stack) > 0:
             module = stack.pop()
             # If module is a leaf, then add to the graph
-            if isinstance(module, (QuantStub, DeQuantStub, cm.EltwiseAdd, nn.Conv2d, nn.Linear, nn.MaxPool2d, nn.AvgPool2d)):
+            if isinstance(module, (QuantStub, DeQuantStub, cm.EltwiseAdd, nn.Conv2d, nn.Linear, cm.MaxPool2dRelu, nn.AvgPool2d)):
                 handle = module.register_forward_hook(self.traceHook)
                 self.hookHandles.append(handle)
             # If the module is not a leaf, then push its children onto the stack
@@ -782,7 +784,11 @@ class TraceDNN:
 
         # 3. Run the model once, and the hooks should be called.
         self.module.eval()
-        output = self.module(input)
+        if isinstance(input, tuple):
+            output = self.module(*input)
+        else:
+            output = self.module(input)
+        #output = self.module(input)
 
         # 4. Remove the hooks
         self.removeHooks()

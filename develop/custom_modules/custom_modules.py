@@ -82,6 +82,23 @@ class EltwiseAdd(nn.Module):
 
         return output
 
+
+class MaxPool2dRelu(nn.MaxPool2d):
+    def __init__(self, kernel_size, stride=None, padding=0, dilation=1,
+                 return_indices=False, ceil_mode=False, relu=False):
+        super().__init__(kernel_size, stride, padding, dilation,
+                 return_indices, ceil_mode)
+        self.relu = relu
+        self.quant = QuantStub()
+
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        output = super().forward(input)
+        if self.relu is True:
+            output = torch.nn.functional.relu(output)
+        output = self.quant(output)
+
+        return output
+
 class Flatten(nn.Module):
     def __init__(self):
         super().__init__()

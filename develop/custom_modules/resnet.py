@@ -175,7 +175,7 @@ class ResNet(nn.Module):
             kernel_size=self.in_kernel_size
         )
         self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1) if family == 'imagenet1k' else None
+        self.maxpoolrelu = cm.MaxPool2dRelu(kernel_size=3, stride=2, padding=1, relu=True) if family == 'imagenet1k' else None
         self.fc = nn.Linear(self.fc_input_number, self.num_classes)
         self.averagePool = nn.AvgPool2d(kernel_size=7, divisor_override=32) if family == 'imagenet1k' \
             else nn.AvgPool2d(kernel_size=8, divisor_override=64)
@@ -252,9 +252,8 @@ class ResNet(nn.Module):
     def forward(self, x):
         output = self.quant(x)
         output = self.inputConvBNReLU(output)
-        if self.maxpool is not None:
-            output = self.maxpool(output)
-        output = self.relu(output)
+        if self.maxpoolrelu is not None:
+            output = self.maxpoolrelu(output)
 
         output = self.stage1(output)
         output = self.stage2(output)
