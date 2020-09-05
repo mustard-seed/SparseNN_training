@@ -98,6 +98,46 @@ class Conv(nn.Module):
             elif type(m) == cm.ConvBN:
                 torch.quantization.fuse_modules(m, ['0', '1'], inplace=True)
 
+class Seq(nn.Module):
+    """
+    Two convolution layer back to back
+    """
+    def __init__(self, in_planes, planes, stride=1):
+        super().__init__()
+        self.convBN1 = resnet.conv3x3BN(in_planes=in_planes,
+                                 out_planes=planes,
+                                 stride=stride,
+                                 require_relu=True)
+        self.convBN2 = resnet.conv3x3BN(in_planes=planes,
+                                 out_planes=planes,
+                                 stride=1)
+        self.quant = QuantStub()
+        self.dequant = DeQuantStub()
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out")
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+    def forward(self, x):
+        x = self.quant(x)
+        x = self.convBN1(x)
+        x = self.convBN2(x)
+        output = self.dequant(x)
+
+        return output
+
+        # Fuse layers prior to quantization
+
+    def fuse_model(self):
+        for m in self.modules():
+            if type(m) == cm.ConvBNReLU:
+                # Fuse the layers in ConvBNReLU module, which is derived from nn.Sequential
+                # Use the default fuser function
+                torch.quantization.fuse_modules(m, ['0', '1', '2'], inplace=True)
+            elif type(m) == cm.ConvBN:
+                torch.quantization.fuse_modules(m, ['0', '1'], inplace=True)
+
 class MaxPool(nn.Module):
     """
     Tiny-Net just for generating a trace purpose
@@ -161,6 +201,8 @@ class TracerTest():
             self.model = Add()
         elif self.mode == "avg":
             self.model = AvgPool2d()
+        elif self.mode == 'seq':
+            self.model = Seq(in_planes=4, planes=8, stride=2)
         else:
             print(self.mode)
             raise ValueError('Unsupported mode')
@@ -208,6 +250,15 @@ class TracerTest():
                                                            threshold=self.pruneThreshold)
         elif self.mode == 'conv':
             custom_pruning.applyClusterPruning(self.model.block[0],
+                                               "weight",
+                                               clusterSize=self.pruneClusterSize,
+                                               threshold=self.pruneThreshold)
+        elif self.mode == 'seq':
+            custom_pruning.applyClusterPruning(self.model.convBN1[0],
+                                               "weight",
+                                               clusterSize=self.pruneClusterSize,
+                                               threshold=self.pruneThreshold)
+            custom_pruning.applyClusterPruning(self.model.convBN2[0],
                                                "weight",
                                                clusterSize=self.pruneClusterSize,
                                                threshold=self.pruneThreshold)
@@ -260,8 +311,8 @@ class TracerTest():
 
 if __name__=='__main__':
     parser = argparse.ArgumentParser(description="testTracer")
-    parser.add_argument('--mode', type=str, choices=['resnet', 'tiny', 'conv', 'maxpool', 'add', 'avg'], default='conv',
-                        help='Mode. Valid choices are resnet, tiny, conv, maxpool, add, and avg')
+    parser.add_argument('--mode', type=str, choices=['resnet', 'tiny', 'conv', 'maxpool', 'add', 'avg', 'seq'], default='conv',
+                        help='Mode. Valid choices are resnet, tiny, conv, maxpool, add, avg, and seq')
     args = parser.parse_args()
 
     torch.manual_seed(0)
@@ -277,6 +328,8 @@ if __name__=='__main__':
         fileBaseName = 'add'
     elif args.mode == 'avg':
         fileBaseName = 'avg'
+    elif args.mode == 'seq':
+        fileBaseName = 'seq'
     else:
         print(args.mode)
         raise ValueError("Unsupported mode")
