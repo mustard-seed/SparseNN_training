@@ -28,6 +28,20 @@ def toy_resnet() -> resnet.ResNet:
     # Number of blocks per stage. Each stage has two parametrized layers
     num_blocks = [1, 1, 1]
     network = resnet.ResNet(block, num_blocks, 'cifar10')
+    for m in network.modules():
+        if isinstance(m, nn.Conv2d):
+            nn.init.kaiming_normal_(m.weight, mode="fan_out")
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+        elif isinstance(m, nn.BatchNorm2d):
+            nn.init.ones_(m.weight)
+            nn.init.zeros_(m.bias)
+        elif isinstance(m, nn.Linear):
+            #HACK: need to centre the weights around a non-zero value for generating test trace,
+            #Otherwise too many frac bits
+            #nn.init.normal_(m.weight, 0, 0.01)
+            nn.init.kaiming_normal_(m.weight, mode="fan_out")
+            nn.init.zeros_(m.bias)
     return network
 
 class TinyNet(nn.Module):
@@ -185,6 +199,37 @@ class AvgPool2d(nn.Module):
 
         return output
 
+class AvgPoolLinear(nn.Module):
+    def __init__(self, _inFeatures: int, _outFeatures: int):
+        super().__init__()
+        self.inFeatures = _inFeatures
+        self.outFeatures = _outFeatures
+        self.pool = cm.AvgPool2dRelu(kernel_size=8, stride=8, divisor_override=64, relu=False)
+        self.fc = cm.LinearReLU(in_features=_inFeatures, out_features=_outFeatures, bias=False)
+        self.quant = QuantStub()
+        self.dequant = DeQuantStub()
+
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out")
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+    def forward(self, x):
+        x = self.quant(x)
+        output = self.pool(x)
+        output = torch.flatten(output, 1)
+        output = self.fc(output)
+        output = self.dequant(output)
+
+        return output
+
+    def fuse_model(self):
+        for m in self.modules():
+            if type(m) == cm.LinearReLU:
+                # Fuse the layers in ConvBNReLU module, which is derived from nn.Sequential
+                # Use the default fuser function
+                torch.quantization.fuse_modules(m, ['0', '1'], inplace=True)
 
 class TracerTest():
     def __init__(self, mode: str='resnet'):
@@ -203,6 +248,8 @@ class TracerTest():
             self.model = AvgPool2d()
         elif self.mode == 'seq':
             self.model = Seq(in_planes=4, planes=8, stride=2)
+        elif self.mode == 'avglinear':
+            self.model = AvgPoolLinear(_inFeatures=4, _outFeatures=8)
         else:
             print(self.mode)
             raise ValueError('Unsupported mode')
@@ -262,6 +309,11 @@ class TracerTest():
                                                "weight",
                                                clusterSize=self.pruneClusterSize,
                                                threshold=self.pruneThreshold)
+        elif self.mode == 'avglinear':
+            custom_pruning.applyClusterPruning(self.model.fc[0],
+                                               "weight",
+                                               clusterSize=self.pruneClusterSize,
+                                               threshold=self.pruneThreshold)
 
     def trace(self, dirname: str, fileBaseName: str):
         tracer = Tracer(self.model)
@@ -311,8 +363,8 @@ class TracerTest():
 
 if __name__=='__main__':
     parser = argparse.ArgumentParser(description="testTracer")
-    parser.add_argument('--mode', type=str, choices=['resnet', 'tiny', 'conv', 'maxpool', 'add', 'avg', 'seq'], default='conv',
-                        help='Mode. Valid choices are resnet, tiny, conv, maxpool, add, avg, and seq')
+    parser.add_argument('--mode', type=str, choices=['resnet', 'tiny', 'conv', 'maxpool', 'add', 'avg', 'seq', 'avglinear'], default='conv',
+                        help='Mode. Valid choices are resnet, tiny, conv, maxpool, add, avg, seq, and avglinear')
     args = parser.parse_args()
 
     torch.manual_seed(0)
@@ -330,6 +382,8 @@ if __name__=='__main__':
         fileBaseName = 'avg'
     elif args.mode == 'seq':
         fileBaseName = 'seq'
+    elif args.mode == 'avglinear':
+        fileBaseName = 'avglinear'
     else:
         print(args.mode)
         raise ValueError("Unsupported mode")
