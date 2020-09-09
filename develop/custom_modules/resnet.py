@@ -12,6 +12,8 @@ import torch.nn as nn
 import torch.nn.init as init
 from torch.quantization import QuantStub, DeQuantStub
 from typing import Union, List
+from copy import deepcopy
+import math
 
 # Define all the classes and methods that this module will be able to export
 # TODO: Update this list
@@ -149,25 +151,58 @@ class ResNet(nn.Module):
     def __init__(self,
                  block:Union[BasicBlock,BottleneckBlock],
                  num_blocks:List[int],
-                 family:str='cifar10'):
+                 family:str ='cifar10',
+                 _stage_planes_override=None,
+                 _stage_strides_override=None,
+                 _fc_input_number_override=None,
+                 _avgpool_2d_size_override=None):
         """
         Construct a resnet according to the specifications
         :param block:
         :param num_blocks: Number of residual blocks in each stage
-        :param family: The resnet family. Either 'cifar10' or 'imagenet1k'
+        :param family: The resnet family. Either 'cifar10' or 'imagenet1k' or 'test'
+        Family test constraints the input plane to be 32 by 32
         """
         super(ResNet, self).__init__()
-        assert family == 'cifar10' or family == 'imagenet1k', \
-            'Supported families are confined to [cifar10, imagenet1k]'
+        assert family == 'cifar10' or family == 'imagenet1k' or family == 'test', \
+            'Supported families are confined to [cifar10, imagenet1k, test]'
         self.family = family
-        self.stage_planes = [16, 32, 64] if family == 'cifar10' else [64, 128, 256, 512]
-        self.stage_strides = [1, 2, 2] if family == 'cifar10' else [1, 2, 2, 2]
-        self.num_classes = 10 if self.family == 'cifar10' else 1000
-        self.fc_input_number = 64 if self.family == 'cifar10' else 512 * block.expansion
+        if family == 'cifar10':
+            self.stage_planes = [16, 32, 64]
+            self.stage_strides = [1, 2, 2]
+            self.num_classes = 10
+            self.fc_input_number = 64
+            self.in_planes = 16
+            self.in_kernel_size = 3
+            self.in_stride = 1
+            self.avgpool_2d_size = 8
+        elif family == 'imagenet1k':
+            self.stage_planes = [64, 128, 256, 512]
+            self.stage_strides = [1, 2, 2, 2]
+            self.num_classes = 1000
+            self.fc_input_number = 512 * block.expansion
+            self.in_planes = 64
+            self.in_kernel_size = 7
+            self.in_stride = 2
+            self.avgpool_2d_size = 7
+        elif family == 'test':
+            assert (_fc_input_number_override is not None) and (_avgpool_2d_size_override is not None) and \
+                   isinstance(_stage_planes_override, list) and isinstance(_stage_strides_override, list), \
+                'Not sufficient arguments provided by the test ResNet variant'
+            self.stage_planes = deepcopy(_stage_planes_override)
+            self.stage_strides = deepcopy(_stage_strides_override)
+            self.num_classes = 10
+            self.fc_input_number = _fc_input_number_override
+            self.in_planes = 16
+            self.in_kernel_size = 3
+            self.in_stride = 1
+            self.avgpool_2d_size = _avgpool_2d_size_override
 
-        self.in_planes = 16 if family == 'cifar10' else 64
-        self.in_kernel_size = 3 if family == 'cifar10' else 7
-        self.in_stride = 1 if family == 'cifar10' else 2
+        else:
+            raise ValueError('Unsupported ResNet variant')
+
+        self.avgpool_divisor = math.ceil(math.pow(2.0, math.log2(self.avgpool_2d_size*self.avgpool_2d_size)))
+
         self.inputConvBNReLU = cm.ConvBNReLU(
             in_planes=3,
             out_planes=self.in_planes,
@@ -177,36 +212,47 @@ class ResNet(nn.Module):
         self.relu = nn.ReLU(inplace=True)
         self.maxpoolrelu = cm.MaxPool2dRelu(kernel_size=3, stride=2, padding=1, relu=True) if family == 'imagenet1k' else None
         self.fc = nn.Linear(self.fc_input_number, self.num_classes)
-        self.averagePool = cm.AvgPool2dRelu(kernel_size=7, divisor_override=32, relu=False) if family == 'imagenet1k' \
-            else cm.AvgPool2dRelu(kernel_size=8, divisor_override=64, relu=False)
+        self.averagePool = cm.AvgPool2dRelu(kernel_size=self.avgpool_2d_size, divisor_override=self.avgpool_divisor, relu=False)
 
-        self.stage1 = self._make_stage(
+        assert (len(self.stage_planes) == len(num_blocks)) and (len(self.stage_planes) == len(self.stage_strides)), \
+            'Incompatiable num_blocks, stage_planes, stage_strides'
+        num_stages = len(self.stage_planes)
+
+        self.stage1 = None
+        if num_stages > 0:
+            self.stage1 = self._make_stage(
+                    block=block,
+                    planes=self.stage_planes[0],
+                    num_block=num_blocks[0],
+                    stride=self.stage_strides[0]
+                )
+
+        self.stage2 = None
+        if num_stages > 1:
+            self.stage2 = self._make_stage(
                 block=block,
-                planes=self.stage_planes[0],
-                num_block=num_blocks[0],
-                stride=self.stage_strides[0]
+                planes=self.stage_planes[1],
+                num_block=num_blocks[1],
+                stride=self.stage_strides[1]
             )
 
-        self.stage2 = self._make_stage(
-            block=block,
-            planes=self.stage_planes[1],
-            num_block=num_blocks[1],
-            stride=self.stage_strides[1]
-        )
+        self.stage3 = None
+        if num_stages > 2:
+            self.stage3 = self._make_stage(
+                block=block,
+                planes=self.stage_planes[2],
+                num_block=num_blocks[2],
+                stride=self.stage_strides[2]
+            )
 
-        self.stage3 = self._make_stage(
-            block=block,
-            planes=self.stage_planes[2],
-            num_block=num_blocks[2],
-            stride=self.stage_strides[2]
-        )
-
-        self.stage4 = None if self.family == 'cifar10' else self._make_stage(
-            block=block,
-            planes=self.stage_planes[3],
-            num_block=num_blocks[3],
-            stride=self.stage_strides[3]
-        )
+        self.stage4 = None
+        if num_stages > 3:
+            self.stage4 = self._make_stage(
+                block=block,
+                planes=self.stage_planes[3],
+                num_block=num_blocks[3],
+                stride=self.stage_strides[3]
+            )
 
         self.quant = QuantStub()
         self.deQuant = DeQuantStub()
@@ -255,9 +301,12 @@ class ResNet(nn.Module):
         if self.maxpoolrelu is not None:
             output = self.maxpoolrelu(output)
 
-        output = self.stage1(output)
-        output = self.stage2(output)
-        output = self.stage3(output)
+        if self.stage1 is not None:
+            output = self.stage1(output)
+        if self.stage2 is not None:
+            output = self.stage2(output)
+        if self.stage3 is not None:
+            output = self.stage3(output)
         if self.stage4 is not None:
             output = self.stage4(output)
         #output = nn.functional.avg_pool2d(output, output.size()[3])

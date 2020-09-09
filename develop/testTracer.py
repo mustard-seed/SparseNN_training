@@ -30,7 +30,8 @@ def toy_resnet() -> resnet.ResNet:
     network = resnet.ResNet(block, num_blocks, 'cifar10')
     for m in network.modules():
         if isinstance(m, nn.Conv2d):
-            nn.init.kaiming_normal_(m.weight, mode="fan_out")
+            #nn.init.kaiming_normal_(m.weight, mode="fan_out")
+            nn.init.normal_(m.weight, 0, 0.4)
             if m.bias is not None:
                 nn.init.zeros_(m.bias)
         elif isinstance(m, nn.BatchNorm2d):
@@ -39,8 +40,43 @@ def toy_resnet() -> resnet.ResNet:
         elif isinstance(m, nn.Linear):
             #HACK: need to centre the weights around a non-zero value for generating test trace,
             #Otherwise too many frac bits
-            #nn.init.normal_(m.weight, 0, 0.01)
-            nn.init.kaiming_normal_(m.weight, mode="fan_out")
+            nn.init.normal_(m.weight, 0, 0.4)
+            #nn.init.kaiming_normal_(m.weight, mode="fan_out")
+            nn.init.zeros_(m.bias)
+    return network
+
+def test_resnet() -> resnet.ResNet:
+    """
+    Generate and initialize a toy resent with only 5 layers.
+    Input size is compatiable with CIFAR-10
+    :return: The ResNet-56 network
+    """
+    block = resnet.BasicBlock
+    # Number of blocks per stage. Each stage has two parametrized layers
+    num_blocks = [1]
+    stage_planes_override = [16]
+    stage_strides_override = [2]
+    avgpool2d_kernelsize = 4
+    fc_input_number = 16
+    network = resnet.ResNet(block, num_blocks, 'test',
+                            _stage_planes_override=stage_planes_override,
+                            _stage_strides_override=stage_strides_override,
+                            _fc_input_number_override= fc_input_number,
+                            _avgpool_2d_size_override= avgpool2d_kernelsize)
+    for m in network.modules():
+        if isinstance(m, nn.Conv2d):
+            #nn.init.kaiming_normal_(m.weight, mode="fan_out")
+            torch.nn.init.normal_(m.weight, mean=0.0, std=0.5)
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+        elif isinstance(m, nn.BatchNorm2d):
+            nn.init.ones_(m.weight)
+            nn.init.zeros_(m.bias)
+        elif isinstance(m, nn.Linear):
+            #HACK: need to centre the weights around a non-zero value for generating test trace,
+            #Otherwise too many frac bits
+            #nn.init.kaiming_normal_(m.weight, mode="fan_out")
+            torch.nn.init.normal_(m.weight, mean=0.0, std=0.5)
             nn.init.zeros_(m.bias)
     return network
 
@@ -59,6 +95,9 @@ class TinyNet(nn.Module):
                 nn.init.kaiming_normal_(m.weight, mode="fan_out")
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
+            elif isinstance(m, nn.BatchNorm2d):
+                nn.init.ones_(m.weight)
+                nn.init.zeros_(m.bias)
 
     def forward(self, x):
         x = self.quant(x)
@@ -250,6 +289,8 @@ class TracerTest():
             self.model = Seq(in_planes=4, planes=8, stride=2)
         elif self.mode == 'avglinear':
             self.model = AvgPoolLinear(_inFeatures=4, _outFeatures=8)
+        elif self.mode == 'restest':
+            self.model = test_resnet()
         else:
             print(self.mode)
             raise ValueError('Unsupported mode')
@@ -322,20 +363,19 @@ class TracerTest():
         elif self.mode == 'add':
             dummyInput = (torch.rand(size=[1, 4, 8, 8]) * (-1.0) + 4.0,
                           torch.rand(size=[1, 4, 8, 8]) * (-1.0) + 4.0)
+        elif self.mode == 'restest':
+            dummyInput = torch.rand(size=[1, 3, 8, 8]) * (-1.0) + 4.0
         else:
             dummyInput = torch.rand(size=[1, 4, 8, 8]) * (-1.0) + 4.0
 
-        tracer.traceModel(dummyInput)
-        tracer.annotate(numMemRegions=3)
-        tracer.dump(dirname, fileBaseName)
-
         """
-        Run inference again to save the input and output
+        Run inference twice. only save the input and output on the second try
         """
+        tracer.module.eval()
         if isinstance(dummyInput, tuple):
-            dummyOutput = self.model(*dummyInput)
+            dummyOutput = tracer.module(*dummyInput)
         else:
-            dummyOutput = self.model(dummyInput)
+            dummyOutput = tracer.module(dummyInput)
         #dummyOutput = self.model(dummyInput)
         print("Saves the dummy input and output")
         blobPath = os.path.join(dirname, fileBaseName + '_inout.yaml')
@@ -361,10 +401,16 @@ class TracerTest():
         # See https://stackoverflow.com/questions/56937691/making-yaml-ruamel-yaml-always-dump-lists-inline
         yaml.dump(blobDict, blobFile, default_flow_style=None)
 
+        tracer.module.apply(torch.quantization.disable_observer)
+        tracer.traceModel(dummyInput)
+        tracer.annotate(numMemRegions=3)
+        tracer.dump(dirname, fileBaseName)
+
 if __name__=='__main__':
     parser = argparse.ArgumentParser(description="testTracer")
-    parser.add_argument('--mode', type=str, choices=['resnet', 'tiny', 'conv', 'maxpool', 'add', 'avg', 'seq', 'avglinear'], default='conv',
-                        help='Mode. Valid choices are resnet, tiny, conv, maxpool, add, avg, seq, and avglinear')
+    parser.add_argument('--mode', type=str, choices=['resnet', 'tiny', 'conv', 'maxpool', 'add', 'avg', 'seq', 'avglinear',
+                                                     'restest'], default='conv',
+                        help='Mode. Valid choices are resnet, tiny, conv, maxpool, add, avg, seq, restest, and avglinear')
     args = parser.parse_args()
 
     torch.manual_seed(0)
@@ -384,6 +430,8 @@ if __name__=='__main__':
         fileBaseName = 'seq'
     elif args.mode == 'avglinear':
         fileBaseName = 'avglinear'
+    elif args.mode == 'restest':
+        fileBaseName = 'restest'
     else:
         print(args.mode)
         raise ValueError("Unsupported mode")
