@@ -1,0 +1,47 @@
+# YAML file parsers treats scientific notaiton as strings
+#Configuration for training baseline ResNet-56 on CIFAR 10
+#See Section 4.2 of Deep Residual Learning for Image Classification for settings
+
+# Iterations, etc
+numEpochToTrain: 30
+batchSizePerWorker: 128
+numThreadsPerWorker: 28
+
+# Learning rates
+lrInitialBase: 0.01
+lrPeakBase: 0.01
+lrWarmupEpochs: 10
+lrStepSize: 10
+lrReductionFactor: 0.1
+lrMomentum: 0.9
+lrMPAdjustmentWarmUpEpochs: 0
+
+# Loss contribution
+enableLossActivation: True
+enableLossWeightL1: True
+enableLossWeightL2: True
+lossActivationLambda: 0.000003
+lossWeightL1Lambda: 0.00008
+lossWeightL2Lambda: 0.0001
+
+# Pruning and quantization parameters
+prune: False
+pruneCluster: 1
+pruneThreshold: 0.005
+quantize: False
+numUpdateBNStatsEpochs: 300
+numUpdateQatObserverEpochs: 300
+
+# See
+seed: 47
+
+# Dataset location
+dataTrainDir: '/homes/jmusel/jmuse/datasets'
+dataValDir: '/homes/jmusel/jmuse/datasets'
+
+# Checkpoints
+checkpointSaveDir: 'experiment_logs/cifar10_new_resnet56_sparsify_p1_log'
+checkpointSaveFileNameFormat: 'ckpt_cifar10_new_resnet56_sparsify_p1_epoch{}.pth.tar'
+
+# Log Dir
+logDir: 'experiment_logs/cifar10_new_resnet56_sparsify_p1_log'
