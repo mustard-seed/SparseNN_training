@@ -2,6 +2,7 @@ import torch.nn as nn
 import torch
 
 from torch.quantization import QuantStub, DeQuantStub
+import torch.nn.quantized
 
 
 class ConvBNReLU(nn.Sequential):
@@ -67,6 +68,17 @@ class ConvBN(nn.Sequential):
             nn.BatchNorm2d(out_planes, momentum=0.1)
         )
 
+# class EltwiseAdd(nn.Module):
+#     def __init__(self, relu=False):
+#         super().__init__()
+#         self.relu = relu
+#         # self.quant = QuantStub()
+#         self.block = torch.nn.quantized.FloatFunctional()
+#
+#     def forward(self, left_input: torch.Tensor, right_input: torch.Tensor) -> torch.Tensor:
+#         output = self.block.add_relu(left_input, right_input) if self.relu is True else self.block.add(left_input, right_input)
+#         return output
+
 class EltwiseAdd(nn.Module):
     def __init__(self, relu=False):
         super().__init__()
@@ -81,7 +93,6 @@ class EltwiseAdd(nn.Module):
         output = self.quant(output)
 
         return output
-
 
 class MaxPool2dRelu(nn.MaxPool2d):
     def __init__(self, kernel_size, stride=None, padding=0, dilation=1,

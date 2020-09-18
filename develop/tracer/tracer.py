@@ -4,9 +4,11 @@ Package for tracing quantized-pruned models in their PyTorch execution order
 import torch
 from torch import Tensor as T
 from torch import nn as nn
-from torch.nn.intrinsic import qat as nninstrinsicqat
+from torch.nn.intrinsic import qat as nniqat
+import torch.nn.qat as nnqat
 from torch.quantization import QuantStub as QuantStub
 from torch.quantization import DeQuantStub as DeQuantStub
+from torch.nn.utils import fuse_conv_bn_weights
 
 
 import custom_modules.custom_modules as cm
@@ -573,8 +575,10 @@ class TraceDNN:
         # Determine output precision scales
         if hasattr(module, 'activation_post_process'):
             outputPrecisionScale = module.activation_post_process.scale.view(1)
+        elif isinstance(module, cm.EltwiseAdd):
+            outputPrecisionScale = module.quant.activation_post_process.scale.view(1)
         else:
-            if isinstance(module, (cm.EltwiseAdd, cm.MaxPool2dRelu, cm.AvgPool2dRelu)):
+            if isinstance(module, (cm.MaxPool2dRelu, cm.AvgPool2dRelu)):
                 # Number of fraction bits = log2(1/scale)
                 # Number of interger bits = 8 - number of fraction bits
                 # Number of fraction bits new = log2(1/scale_new) = number of fraction bits - 1 = log2(1/scale) - 1
@@ -598,8 +602,11 @@ class TraceDNN:
         outputChannels = output.size()[1]
         outputRelu = False
 
-        if isinstance(module, (nn.Conv2d, nn.Linear)):
-            if isinstance(module, (nninstrinsicqat.ConvReLU2d, nninstrinsicqat.LinearReLU, nninstrinsicqat.ConvBnReLU2d)):
+        # For the list that convolution layer-like types after qat is applied,
+        # see
+        # https://github.com/pytorch/pytorch/blob/20ac7362009dd8e0aca6e72fc9357773136a83b8/torch/quantization/quantization_mappings.py#L54
+        if isinstance(module, (nnqat.Linear, nnqat.Conv2d, nniqat.ConvBn2d, nniqat.ConvBnReLU2d, nniqat.ConvReLU2d, nniqat.LinearReLU)):
+            if isinstance(module, (nniqat.ConvReLU2d, nniqat.LinearReLU, nniqat.ConvBnReLU2d)):
                 outputRelu = True
 
             # Determine padding and kernel size
@@ -607,7 +614,7 @@ class TraceDNN:
             kernelSize = inputWidths[0]
             kernelStride = kernelSize
             groups = 1
-            if isinstance(module, nn.Conv2d):
+            if isinstance(module, (nnqat.Conv2d, nniqat.ConvBn2d, nniqat.ConvBnReLU2d, nniqat.ConvReLU2d)):
                 # Extract the padding for convolution.
                 # Assume that the horizontal and vertical paddings are the same
                 padding = module.padding[0]
@@ -615,8 +622,29 @@ class TraceDNN:
                 kernelStride = module.stride[0]
                 groups = module.groups
 
+            weight = module.weight
+            bias = None
+            if module.bias is not None:
+                bias = module.bias
+            # Perform batchnorm folding and update the quantization parameters if necessary
+            if isinstance(module, (nniqat.ConvBn2d, nniqat.ConvBnReLU2d)):
+                """
+                Assumptions:
+                    - This is a fused model
+                    - When the fusion occured, the model was not in eval mode, so its bn parameters are not folded at this moment
+                    - Warning: If bn folding have occured, this the following folding will mess up the weights and bias
+                    -   Reason: PyTorch's BN folding function only change conv weights and biases, but does affect BN parameters
+                """
+                weight, bias = fuse_conv_bn_weights(
+                    module.weight, module.bias, module.running_mean, module.running_var,
+                    module.eps, module.gamma, module.beta)
+            weight_post_process = module.weight_fake_quant
+            weight_post_process.enable_observer()
+            weight_post_process(weight)
+            weight_post_process.disable_observer()
+
             # Determine weight frac bits
-            weightPrecisionScale = module.weight_fake_quant.scale.view(1)
+            weightPrecisionScale = weight_post_process.scale.view(1)
             weightFracBits = int(torch.round(torch.log2(1.0 / weightPrecisionScale)).view(1)[0].item())
             hasBias = False if module.bias is None else True
             newLayer = ConvInfo(
@@ -643,17 +671,14 @@ class TraceDNN:
             # Extract parameters
             # Extract weights
             newLayer.weightParameterFileStartPosition = self.parameterCount
-            self.parameterCount += module.weight.numel()
-            self.parameters.append(module.weight)
+            self.parameterCount += weight.numel()
+            self.parameters.append(weight)
             self.parameterKeys.append(str(self.layerID)+'_weight')
 
             newLayer.biasParameterFileStartPosition = self.parameterCount
             self.parameterCount += outputChannels
             self.parameterKeys.append(str(self.layerID) + '_bias')
-            bias = None
-            if hasBias is True:
-                bias = module.bias
-            else:
+            if hasBias is False:
                 bias = torch.zeros([outputChannels])
 
             self.parameters.append(bias)
@@ -773,7 +798,7 @@ class TraceDNN:
         while len(stack) > 0:
             module = stack.pop()
             # If module is a leaf, then add to the graph
-            if isinstance(module, (QuantStub, DeQuantStub, cm.EltwiseAdd, nn.Conv2d, nn.Linear, cm.MaxPool2dRelu, nn.AvgPool2d)):
+            if isinstance(module, (QuantStub, DeQuantStub, cm.EltwiseAdd, nn.Conv2d, nn.Linear, cm.MaxPool2dRelu, cm.AvgPool2dRelu)):
                 handle = module.register_forward_hook(self.traceHook)
                 self.hookHandles.append(handle)
             # If the module is not a leaf, then push its children onto the stack

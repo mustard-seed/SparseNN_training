@@ -10,6 +10,7 @@ from    tracer.tracer import TraceDNN as Tracer
 
 import torch
 import torch.nn as nn
+import torch.quantization
 import torch.nn.init as init
 from torch.quantization import QuantStub, DeQuantStub
 from typing import Union, List
@@ -53,11 +54,11 @@ def test_resnet() -> resnet.ResNet:
     """
     block = resnet.BasicBlock
     # Number of blocks per stage. Each stage has two parametrized layers
-    num_blocks = [1]
-    stage_planes_override = [16]
-    stage_strides_override = [2]
-    avgpool2d_kernelsize = 4
-    fc_input_number = 16
+    num_blocks = [15]
+    stage_planes_override = [32]
+    stage_strides_override = [4]
+    avgpool2d_kernelsize = 8
+    fc_input_number = 32
     network = resnet.ResNet(block, num_blocks, 'test',
                             _stage_planes_override=stage_planes_override,
                             _stage_strides_override=stage_strides_override,
@@ -65,8 +66,8 @@ def test_resnet() -> resnet.ResNet:
                             _avgpool_2d_size_override= avgpool2d_kernelsize)
     for m in network.modules():
         if isinstance(m, nn.Conv2d):
-            #nn.init.kaiming_normal_(m.weight, mode="fan_out")
-            torch.nn.init.normal_(m.weight, mean=0.0, std=0.5)
+            nn.init.kaiming_normal_(m.weight, mode="fan_out")
+            # torch.nn.init.normal_(m.weight, mean=0.0, std=0.5)
             if m.bias is not None:
                 nn.init.zeros_(m.bias)
         elif isinstance(m, nn.BatchNorm2d):
@@ -75,8 +76,8 @@ def test_resnet() -> resnet.ResNet:
         elif isinstance(m, nn.Linear):
             #HACK: need to centre the weights around a non-zero value for generating test trace,
             #Otherwise too many frac bits
-            #nn.init.kaiming_normal_(m.weight, mode="fan_out")
-            torch.nn.init.normal_(m.weight, mean=0.0, std=0.5)
+            nn.init.kaiming_normal_(m.weight, mode="fan_out")
+            # torch.nn.init.normal_(m.weight, mean=0.0, std=0.5)
             nn.init.zeros_(m.bias)
     return network
 
@@ -357,26 +358,35 @@ class TracerTest():
                                                threshold=self.pruneThreshold)
 
     def trace(self, dirname: str, fileBaseName: str):
-        tracer = Tracer(self.model)
         if self.mode == 'resnet':
             dummyInput = torch.rand(size=[1, 3, 32, 32]) * (-1.0) + 4.0
         elif self.mode == 'add':
-            dummyInput = (torch.rand(size=[1, 4, 8, 8]) * (-1.0) + 4.0,
-                          torch.rand(size=[1, 4, 8, 8]) * (-1.0) + 4.0)
+            # dummyInput = (torch.rand(size=[1, 4, 8, 8]) * (-1.0) + 4.0,
+            #               torch.rand(size=[1, 4, 8, 8]) * (-1.0) + 4.0)
+            dummyInput = (torch.rand(size=[1, 8, 4, 4]) * (4.0) - 2.0,
+                          torch.rand(size=[1, 8, 4, 4]) * (2.0) - 1.0)
         elif self.mode == 'restest':
-            dummyInput = torch.rand(size=[1, 3, 8, 8]) * (-1.0) + 4.0
+            dummyInput = torch.rand(size=[1, 3, 32, 32]) * 4.0 - 2.0
         else:
             dummyInput = torch.rand(size=[1, 4, 8, 8]) * (-1.0) + 4.0
 
         """
         Run inference twice. only save the input and output on the second try
+        The first run is to calibrate the quantization parameters
         """
-        tracer.module.eval()
+        self.model.eval()
         if isinstance(dummyInput, tuple):
-            dummyOutput = tracer.module(*dummyInput)
+            self.model(*dummyInput)
         else:
-            dummyOutput = tracer.module(dummyInput)
-        #dummyOutput = self.model(dummyInput)
+            self.model(dummyInput)
+
+        self.model.apply(torch.quantization.disable_observer)
+
+        # quantized_model = torch.quantization.convert(self.model.eval(), inplace=False)
+        if isinstance(dummyInput, tuple):
+            dummyOutput = self.model(*dummyInput)
+        else:
+            dummyOutput = self.model(dummyInput)
         print("Saves the dummy input and output")
         blobPath = os.path.join(dirname, fileBaseName + '_inout.yaml')
         blobFile = open(blobPath, 'w')
@@ -400,8 +410,7 @@ class TracerTest():
         # We want list to be dumped as in-line format, hence the choice of the default_flow_style
         # See https://stackoverflow.com/questions/56937691/making-yaml-ruamel-yaml-always-dump-lists-inline
         yaml.dump(blobDict, blobFile, default_flow_style=None)
-
-        tracer.module.apply(torch.quantization.disable_observer)
+        tracer = Tracer(self.model)
         tracer.traceModel(dummyInput)
         tracer.annotate(numMemRegions=3)
         tracer.dump(dirname, fileBaseName)
@@ -423,7 +432,7 @@ if __name__=='__main__':
     elif args.mode == 'maxpool':
         fileBaseName = 'mp'
     elif args.mode == 'add':
-        fileBaseName = 'add'
+        fileBaseName = 'addbig'
     elif args.mode == 'avg':
         fileBaseName = 'avg'
     elif args.mode == 'seq':
@@ -431,7 +440,7 @@ if __name__=='__main__':
     elif args.mode == 'avglinear':
         fileBaseName = 'avglinear'
     elif args.mode == 'restest':
-        fileBaseName = 'restest'
+        fileBaseName = 'restest_1s15b4stride'
     else:
         print(args.mode)
         raise ValueError("Unsupported mode")
