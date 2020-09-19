@@ -54,11 +54,11 @@ def test_resnet() -> resnet.ResNet:
     """
     block = resnet.BasicBlock
     # Number of blocks per stage. Each stage has two parametrized layers
-    num_blocks = [15]
-    stage_planes_override = [32]
-    stage_strides_override = [4]
+    num_blocks = [9, 9, 9]
+    stage_planes_override = [16, 32, 64]
+    stage_strides_override = [1, 2, 2]
     avgpool2d_kernelsize = 8
-    fc_input_number = 32
+    fc_input_number = 64
     network = resnet.ResNet(block, num_blocks, 'test',
                             _stage_planes_override=stage_planes_override,
                             _stage_strides_override=stage_strides_override,
@@ -363,8 +363,8 @@ class TracerTest():
         elif self.mode == 'add':
             # dummyInput = (torch.rand(size=[1, 4, 8, 8]) * (-1.0) + 4.0,
             #               torch.rand(size=[1, 4, 8, 8]) * (-1.0) + 4.0)
-            dummyInput = (torch.rand(size=[1, 8, 4, 4]) * (4.0) - 2.0,
-                          torch.rand(size=[1, 8, 4, 4]) * (2.0) - 1.0)
+            dummyInput = (torch.rand(size=[1, 16, 8, 8]) * (4.0) - 2.0,
+                          torch.rand(size=[1, 16, 8, 8]) * (2.0) - 1.0)
         elif self.mode == 'restest':
             dummyInput = torch.rand(size=[1, 3, 32, 32]) * 4.0 - 2.0
         else:
@@ -417,15 +417,15 @@ class TracerTest():
 
 if __name__=='__main__':
     parser = argparse.ArgumentParser(description="testTracer")
-    parser.add_argument('--mode', type=str, choices=['resnet', 'tiny', 'conv', 'maxpool', 'add', 'avg', 'seq', 'avglinear',
+    parser.add_argument('--mode', type=str, choices=['tiny', 'conv', 'maxpool', 'add', 'avg', 'seq', 'avglinear',
                                                      'restest'], default='conv',
-                        help='Mode. Valid choices are resnet, tiny, conv, maxpool, add, avg, seq, restest, and avglinear')
+                        help='Mode. Valid choices are tiny, conv, maxpool, add, avg, seq, restest, and avglinear')
     args = parser.parse_args()
 
     torch.manual_seed(0)
-    if args.mode == 'resnet':
-        fileBaseName = 'testTrace'
-    elif args.mode == 'tiny':
+    # if args.mode == 'resnet':
+    #     fileBaseName = 'testTrace'
+    if args.mode == 'tiny':
         fileBaseName = 'tinyTrace'
     elif args.mode == 'conv':
         fileBaseName = 'convTrace'
@@ -440,7 +440,7 @@ if __name__=='__main__':
     elif args.mode == 'avglinear':
         fileBaseName = 'avglinear'
     elif args.mode == 'restest':
-        fileBaseName = 'restest_1s15b4stride'
+        fileBaseName = 'restest_resnet56_like'
     else:
         print(args.mode)
         raise ValueError("Unsupported mode")

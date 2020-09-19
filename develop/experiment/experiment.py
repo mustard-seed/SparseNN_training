@@ -580,6 +580,7 @@ class experimentBase(object):
             self.train_one_epoch(optimizer, epoch)
             self.validate(epoch)
             # TODO: save the checkpoint
+            # TODO: Maybe should save this before validate?
             self.save_experiment_to_checkpoint(optimizer, self.config.checkpointSaveDir)
 
             #Update statistics
@@ -725,7 +726,7 @@ class experimentBase(object):
     def print_model(self):
         print(self.model)
 
-    def trace_model(self, dirnameOverride=None, numMemoryRegions: int=3, modelName: str='model') -> None:
+    def trace_model(self, dirnameOverride=None, numMemoryRegions: int=3, modelName: str='model', foldBN: bool=True) -> None:
         """
         Trace the model after pruning and quantization, and save the trace and parameters
         :return: None
@@ -746,26 +747,25 @@ class experimentBase(object):
         blobPath = os.path.join(dirname, modelName + '_inout.yaml')
         blobFile = open(blobPath, 'w')
         blobDict: dict = {}
-
-        trace = Tracer(self.model)
-        trace.module.eval()
+        self.model.eval()
         output = None
         sampleIn = None
         for (data, target) in self.valDataLoader:
             sampleIn = data[0].unsqueeze(0)
             print(sampleIn.shape)
-            trace.traceModel(sampleIn)
-            output = trace.module(sampleIn)
+            output = self.model(sampleIn)
             break
         inputArray = sampleIn.view(sampleIn.numel()).tolist()
         blobDict['input'] = inputArray
 
         outputArray = output.view(output.numel()).tolist()
         blobDict['output'] = outputArray
-
         # We want list to be dumped as in-line format, hence the choice of the default_flow_style
         # See https://stackoverflow.com/questions/56937691/making-yaml-ruamel-yaml-always-dump-lists-inline
         yaml.dump(blobDict, blobFile, default_flow_style=None)
+
+        trace = Tracer(self.model, _foldBN=foldBN)
+        trace.traceModel(sampleIn)
 
         trace.annotate(numMemRegions=numMemoryRegions)
         trace.dump(dirname, fileNameBase=modelName)

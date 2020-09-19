@@ -363,4 +363,4 @@ if __name__ == '__main__':
     elif args.mode == 'print_model':
         experiment.print_model()
     elif args.mode == 'trace_model':
-        experiment.trace_model(dirnameOverride=os.getcwd(), numMemoryRegions=3, modelName='resnet56_cifar10')
+        experiment.trace_model(dirnameOverride=os.getcwd(), numMemoryRegions=3, modelName='resnet56_cifar10', foldBN=True)

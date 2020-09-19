@@ -314,7 +314,7 @@ class EltAddInfo(LayerInfo):
 class TraceDNN:
     ID_IDX = 0
     PRECISION_IDX = 1
-    def __init__(self, module: nn.Module):
+    def __init__(self, module: nn.Module, _foldBN: bool=True):
         self.module = module
 
         # Run-time arguments
@@ -333,6 +333,8 @@ class TraceDNN:
         self.parameterCount: int = 0
         self.parameters: List[T] = []
         self.parameterKeys: List[str] = []
+
+        self.foldBN = _foldBN
 
     def reset(self):
         self.layerID = 0
@@ -627,7 +629,7 @@ class TraceDNN:
             if module.bias is not None:
                 bias = module.bias
             # Perform batchnorm folding and update the quantization parameters if necessary
-            if isinstance(module, (nniqat.ConvBn2d, nniqat.ConvBnReLU2d)):
+            if self.foldBN and isinstance(module, (nniqat.ConvBn2d, nniqat.ConvBnReLU2d)):
                 """
                 Assumptions:
                     - This is a fused model
@@ -646,7 +648,7 @@ class TraceDNN:
             # Determine weight frac bits
             weightPrecisionScale = weight_post_process.scale.view(1)
             weightFracBits = int(torch.round(torch.log2(1.0 / weightPrecisionScale)).view(1)[0].item())
-            hasBias = False if module.bias is None else True
+            hasBias = False if bias is None else True
             newLayer = ConvInfo(
                 outputFracBits=int(outputFracBits),
                 outputChannels=outputChannels,
