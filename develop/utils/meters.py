@@ -86,13 +86,13 @@ class BaseMeter(object):
                                       self.aggregateActivationSparsityLoss.avg, epoch)
             self.logWriter.add_scalar(self.logPrefix + '/weight_L2_loss', self.aggregateWeightL2Loss.avg, epoch)
 
-            print('----{prefix}: {epoch}------\n Average total loss: {total_loss:.2f} \n Average activation loss: {activation_loss:.2f} \n Average prediction loss: {prediction_loss}'.format(
-                prefix = self.logPrefix,
-                epoch = epoch+1,
-                total_loss = self.aggregateLoss.avg,
-                activation_loss = self.aggregateActivationSparsityLoss.avg,
-                prediction_loss = self.aggregatePredictionLoss.avg
-            ))
+            # print('----{prefix}: {epoch}------\n Average total loss: {total_loss:.2f} \n Average activation loss: {activation_loss:.2f} \n Average prediction loss: {prediction_loss}'.format(
+            #     prefix = self.logPrefix,
+            #     epoch = epoch+1,
+            #     total_loss = self.aggregateLoss.avg,
+            #     activation_loss = self.aggregateActivationSparsityLoss.avg,
+            #     prediction_loss = self.aggregatePredictionLoss.avg
+            # ))
 
 
 class ClassificationMeter(BaseMeter):
@@ -123,7 +123,7 @@ class ClassificationMeter(BaseMeter):
         if self.logWriter:
             super().log(epoch)
             self.logWriter.add_scalar(self.logPrefix + '/acc1', self.aggregateAccuracyTop1.avg, epoch)
-            print('top-1 prediction accuracy: {:2f}%\n'.format(self.aggregateAccuracyTop1.avg))
+            # print('top-1 prediction accuracy: {:2f}%\n'.format(self.aggregateAccuracyTop1.avg))
 
 class TimeMeter(object):
     def __init__(self, multiprocessing: bool = False, logWriter=None, logPrefix=''):
@@ -148,9 +148,9 @@ class TimeMeter(object):
             self.logWriter.add_scalar(self.logPrefix + '/average_batch_load_time', self.dataLoadingTime.avg, epoch)
             self.logWriter.add_scalar(self.logPrefix + '/average_batch_train_time', self.batchTime.avg, epoch)
 
-            print('Average batch loading time (s): {load_time:.5f} \n Average batch training time (s): {train_time:.5f} \n'.format(
-                prefix = self.logPrefix,
-                epoch = epoch+1,
-                load_time = self.dataLoadingTime.avg,
-                train_time = self.batchTime.avg
-            ))
+            # print('Average batch loading time (s): {load_time:.5f} \n Average batch training time (s): {train_time:.5f} \n'.format(
+            #     prefix = self.logPrefix,
+            #     epoch = epoch+1,
+            #     load_time = self.dataLoadingTime.avg,
+            #     train_time = self.batchTime.avg
+            # ))

@@ -284,7 +284,7 @@ class experimentBase(object):
             lr = (roundedEpoch / self.config.lrWarmupEpochs * (self.config.lrPeakBase - self.config.lrInitialBase)) \
                  + self.config.lrInitialBase
         else:
-            lr = self.config.lrPeakBase * (self.config.lrReductionFactor ** ((epoch - self.config.lrWarmupEpochs) // self.config.lrStepSize))
+            lr = self.config.lrPeakBase * (self.config.lrReductionFactor ** (epoch // self.config.lrStepSize))
             lr = max(lr, MININUM_LR)
 
         lrAdj = 1.0
@@ -506,14 +506,16 @@ class experimentBase(object):
         # Add forward_hook to extract activation from relevant layers
         fowardHookHandles = self.apply_hook_activation(self.model)
 
-        # Reset the train meter stats
-        self.trainMeter.reset()
         # Set the model into training mode
         self.model.train()
 
         # Shuffle the data set if we are using multiprocessing
         if self.trainDataSampler is not None:
             self.trainDataSampler.set_epoch(epoch)
+
+        # Reset the train meter stats
+        self.trainMeter.reset()
+        self.trainTimeMeter.reset()
 
         end = time.time()
         for batchIdx, (data, target) in enumerate(self.trainDataLoader):
@@ -527,8 +529,9 @@ class experimentBase(object):
 
             batchTime = (time.time() - end)
             end = time.time()
-            if self.multiprocessing is False or (self.multiprocessing is True and hvd.rank() == 0):
-                if int(batchIdx+1) % 10 == 0:
+            self.trainTimeMeter.update(dataLoadingTime=torch.tensor(dataLoadingTime), batchTime=torch.tensor(batchTime))
+            if int(batchIdx+1) % 10 == 0:
+                if self.multiprocessing is False or (self.multiprocessing is True and hvd.rank() == 0):
                     print('Epoch: [{0}][{1}/{2}]\t'
                           'Loss {loss:.4f}\t'
                           'Prec@1 {top1:.3f})'.format(
@@ -536,13 +539,16 @@ class experimentBase(object):
                         loss=self.trainMeter.aggregateLoss.val,
                         top1=self.trainMeter.aggregateAccuracyTop1.val))
 
-            self.trainTimeMeter.update(dataLoadingTime=torch.tensor(dataLoadingTime), batchTime=torch.tensor(batchTime))
+                    # Log the accuracy, and various losses, and timing for the last ten epoch
+                    self.trainMeter.log(float(epoch) + float(batchIdx)/len(self.trainDataLoader))
+                    self.trainTimeMeter.log(float(epoch) + float(batchIdx)/len(self.trainDataLoader))
+
+                # Reset the train meter stats
+                self.trainMeter.reset()
+                self.trainTimeMeter.reset()
+
             # End of training one iteration
         # End of training one epoch
-
-        # Log the average accuracy, and various losses over the epoch
-        self.trainMeter.log(epoch)
-        self.trainTimeMeter.log(epoch)
 
         # Remove the activation intercept hooks
         remove_hook_activation(forwardHookHandlesDict=fowardHookHandles)

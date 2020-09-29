@@ -18,49 +18,67 @@ import shutil
 
 from custom_modules.custom_modules import ConvBNReLU, LinearReLU, ConvReLU, ConvBN
 import pruning.pruning as custom_pruning
-from custom_modules.resnet import ResNet, cifar_resnet56, BasicBlock, BottleneckBlock, conv1x1BN, conv3x3BN
+from custom_modules.resnet import ResNet, imagenet_resnet50, BasicBlock, BottleneckBlock, conv1x1BN, conv3x3BN
 from utils.meters import ClassificationMeter, TimeMeter
 from experiment.experiment import experimentBase, globalActivationDict, globalWeightDict, hook_activation
 
 import horovod.torch as hvd
 
-class experimentCifar10ResNet56(experimentBase):
+class experimentImagenetResNet50(experimentBase):
+    """
+    Train script is based on https://github.com/horovod/horovod/blob/master/examples/pytorch_imagenet_resnet50.py
+    """
     def __init__(self, configFile, multiprocessing=False):
         super().__init__(configFile, multiprocessing)
-        self.model = cifar_resnet56()
+        self.model = imagenet_resnet50()
 
         datasetDir = self.config.dataTrainDir
         """
-        See Section 4.2 in the original ResNet paper for data pre-processing and augmentation settings
+        Original training data augmentation for ResNet-50 training on ImageNet
+        See Section 3.4 of the original ResNet paper.
+        "The image is resized with its shorter side randomly sampled in [256;480] for scale augmentation [41]. 
+        A 224x224 crop is randomly sampled from an image or its horizontal flip, 
+        with the per-pixel mean subtracted [21]. The standard color augmentation in [21] is used."
+        
+        A note on torchvision.transforms.RandomSizedCrop
+            - A crop of random size (default: of 0.08 to 1.0) of the original size and a random aspect ratio 
+            (default: of 3/4 to 4/3) of the original aspect ratio is made. 
+            This crop is finally resized to given size. 
+            This is popularly used to train the Inception networks.
         """
         # Might've accidentally used ImageNet's settings....
         train_transform = transforms.Compose([
+                                        transforms.RandomResizedCrop(size=224, scale=(0.5, 1.0)),
                                         transforms.RandomHorizontalFlip(),
-                                        transforms.RandomCrop(32, 4),
                                         transforms.ToTensor(),
                                         transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                                              std=[0.229, 0.224, 0.225])
                                         ])
         val_transform = transforms.Compose([
+            transforms.Resize(256),
+            transforms.CenterCrop(224),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                  std=[0.229, 0.224, 0.225])
         ])
-        self.trainDataSet = datasets.CIFAR10(datasetDir, train=True, download=False,
+        self.trainDataSet = datasets.ImageFolder(os.path.join(datasetDir, 'train'),
                                            transform=train_transform)
         self.trainDataSampler = distributed.DistributedSampler(
             self.trainDataSet, num_replicas=hvd.size(), rank=hvd.rank()
         ) if multiprocessing is True \
             else None
 
+        # TODO: Check whether having multiple workers actually speed up data loading
+        dataLoaderKwargs = {'num_workers': 4}
+
         self.trainDataLoader = DataLoader(
             self.trainDataSet,
             batch_size=self.config.batchSizePerWorker,
             sampler=self.trainDataSampler,
-            shuffle=True if self.trainDataSampler is None else False
-            #,**dataKwargs
+            shuffle=True if self.trainDataSampler is None else False,
+            **dataLoaderKwargs
         )
-        self.valDataSet = datasets.CIFAR10(datasetDir, train=False, download=False,
+        self.valDataSet = datasets.ImageFolder(os.path.join(datasetDir, 'val'),
                                            transform=val_transform)
 
         self.valDataSampler = distributed.DistributedSampler(
@@ -72,8 +90,8 @@ class experimentCifar10ResNet56(experimentBase):
             self.valDataSet,
             batch_size=self.config.batchSizePerWorker,
             sampler=self.valDataSampler,
-            shuffle=True if self.valDataSampler is None else False
-            #,**dataKwargs
+            shuffle=True if self.valDataSampler is None else False,
+            **dataLoaderKwargs
         )
 
         if (multiprocessing is True and hvd.rank() == 0) or multiprocessing is False:
@@ -112,16 +130,21 @@ class experimentCifar10ResNet56(experimentBase):
         :return: Handles to the activation interception hooks
         """
         pruneDict = {
-            'inputConvBNReLU': self.model.inputConvBNReLU
+            'inputConvBNReLU': self.model.inputConvBNReLU,
+            'maxpoolReLU': self.model.maxpoolrelu,
+            'averagePool': self.model.averagePool
         }
         # Add the residual blocks to the dictionary
         # Don't prune the input tensor of the elementwise add operation
         blockId = 0
         for m in self.model.modules():
-            if isinstance(m, BasicBlock):
+            if isinstance(m, BottleneckBlock):
                 name = 'block_{}_layer0'.format(blockId)
                 pruneDict[name] = m.convBN1
+                name = 'block_{}_layer1'.format(blockId)
+                pruneDict[name] = m.convBN2
                 name = 'block_{}_out'.format(blockId)
+                #Do not prune the output of convBN3
                 pruneDict[name] = m
                 blockId +=1
         # Don't prune the output of the final fc layer
@@ -146,11 +169,13 @@ class experimentCifar10ResNet56(experimentBase):
 
         blockId = 0
         for m in self.model.modules():
-            if isinstance(m, BasicBlock):
+            if isinstance(m, BottleneckBlock):
                 name = 'block_{}_layer0'.format(blockId)
                 globalWeightDict[name] = m.convBN1[0].weight.clone()
                 name = 'block_{}_layer1'.format(blockId)
                 globalWeightDict[name] = m.convBN2[0].weight.clone()
+                name = 'block_{}_layer2'.format(blockId)
+                globalWeightDict[name] = m.convBN3[0].weight.clone()
                 if isinstance(m.shortcut, ConvBN):
                     name = 'block_{}_shortcut'.format(blockId)
                     globalWeightDict[name] = m.shortcut[0].weight.clone()
@@ -175,7 +200,7 @@ class experimentCifar10ResNet56(experimentBase):
             weightList = []
             layerNameList = []
 
-            targetList = [model.inputConvBNReLU,
+            targetList = [model.inputConvBNReLU, model.maxpoolrelu,
                           model.stage1, model.stage2, model.stage3, model.stage4,
                           model.averagePool, model.fc]
 
@@ -226,6 +251,12 @@ class experimentCifar10ResNet56(experimentBase):
                             weightList.append(None)
                             layerNameList.append('block_{}_output'.format(blockId))
                             blockId += 1
+
+                elif isinstance(target, nn.MaxPool2d):
+                    interceptHandle = target.register_forward_hook(intercept_activation)
+                    interceptHandleList.append(interceptHandle)
+                    weightList.append(None)
+                    layerNameList.append('input_max_pool')
 
                 elif isinstance(target, nn.AvgPool2d):
                     interceptHandle = target.register_forward_hook(intercept_activation)
@@ -309,12 +340,16 @@ class experimentCifar10ResNet56(experimentBase):
         )
 
         for m in self.model.modules():
-            if isinstance(m, BasicBlock):
+            if isinstance(m, BottleneckBlock):
                 custom_pruning.applyClusterPruning(m.convBN1[0],
                                                    "weight",
                                                    clusterSize=self.config.pruneCluster,
                                                    threshold=self.config.pruneThreshold)
                 custom_pruning.applyClusterPruning(m.convBN2[0],
+                                                   "weight",
+                                                   clusterSize=self.config.pruneCluster,
+                                                   threshold=self.config.pruneThreshold)
+                custom_pruning.applyClusterPruning(m.convBN3[0],
                                                    "weight",
                                                    clusterSize=self.config.pruneCluster,
                                                    threshold=self.config.pruneThreshold)
@@ -325,7 +360,7 @@ class experimentCifar10ResNet56(experimentBase):
                                                        threshold=self.config.pruneThreshold)
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="CIFAR10_ResNet56 experiment")
+    parser = argparse.ArgumentParser(description="Imagenet_ResNet50 experiment")
     parser.add_argument('--mode', type=str, choices=['train', 'evaluate_sparsity', 'print_model', 'trace_model'],
                         default='train',
                         help='Mode. Valid choices are train, evaluate_sparsity, and print model')
@@ -344,7 +379,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
     if args.multiprocessing is True:
         hvd.init()
-    experiment = experimentCifar10ResNet56(configFile=args.config_file,
+    experiment = experimentImagenetResNet50(configFile=args.config_file,
                                  multiprocessing=args.multiprocessing)
     if args.load_checkpoint == 1 or args.load_checkpoint == 2:
         assert args.checkpoint_path is not None, 'Experiment is required to load from an existing checkpoint, but no path to checkpoint is provided!'
@@ -364,4 +399,4 @@ if __name__ == '__main__':
     elif args.mode == 'print_model':
         experiment.print_model()
     elif args.mode == 'trace_model':
-        experiment.trace_model(dirnameOverride=os.getcwd(), numMemoryRegions=3, modelName='resnet56_cifar10', foldBN=True)
+        experiment.trace_model(dirnameOverride=os.getcwd(), numMemoryRegions=3, modelName='resnet50_imagenet', foldBN=True)

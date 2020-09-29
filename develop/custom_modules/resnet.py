@@ -338,5 +338,15 @@ def cifar_resnet56() -> ResNet:
     network = ResNet(block, num_blocks, 'cifar10')
     return network
 
+def imagenet_resnet50() -> ResNet:
+    """
+    Generate and initialize a ResNet-50 network for ImageNet-1K
+    :return: The ResNet-50 network
+    """
+    block = BottleneckBlock
+    num_blocks = [3, 4, 6, 3]
+    network = ResNet(block, num_blocks, 'imagenet1k')
+    return network
+
 
 
