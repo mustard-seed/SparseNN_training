@@ -3,7 +3,7 @@
 #See Section 4.2 of Deep Residual Learning for Image Classification for settings
 
 # Iterations, etc
-numEpochToTrain: 90
+numEpochToTrain: 40
 batchSizePerWorker: 32
 numThreadsPerWorker: 28
 
@@ -15,15 +15,19 @@ numThreadsPerWorker: 28
 #'eta = 0.1 * k * n / 256', where n is 32, and n is 8 (5.1)
 #
 #In the original ResNet-50 paper, the (effective) mini-batch size is 256, and the learning rate is 0.1
-#So with a smaller batch size, which is 1/8 of theirs, let's do 0.0125
-
-lrInitialBase: 0.05
-lrPeakBase: 0.05
+#So with a smaller batch size, which is 1/16 of theirs, the learning rate ought to be 0.00625
+#DIFF:
+# The longer the training takes on the cluster, the more the chance it will run into some kind of error
+# So we increase the unattenuated per-worker learning rate to 0.0125 (2x)
+# We cool the learning schedule faster than the original ImageNet.
+#The schedule as published seems to be too conservative
+lrInitialBase: 0.0125
+lrPeakBase: 0.0125
 lrWarmupEpochs: 1
-lrStepSize: 30
+lrStepSize: 10
 lrReductionFactor: 0.1
 lrMomentum: 0.9
-lrMPAdjustmentWarmUpEpochs: 5
+lrMPAdjustmentWarmUpEpochs: 3
 
 # Loss contribution
 enableLossActivation: False
@@ -49,8 +53,8 @@ dataTrainDir: '/homes/jmusel/jmuse/imagenet/train'
 dataValDir: '/homes/jmusel/jmuse/imagenet/val'
 
 # Checkpoints
-checkpointSaveDir: 'experiment_logs/imagenet_resnet50_baseline_log'
+checkpointSaveDir: 'experiment_logs/imagenet_resnet50_baseline2_log'
 checkpointSaveFileNameFormat: 'ckpt_baseline_epoch{}.pth.tar'
 
 # Log Dir
-logDir: 'experiment_logs/imagenet_resnet50_baseline_log'
+logDir: 'experiment_logs/imagenet_resnet50_baseline2_log'

@@ -32,7 +32,8 @@ class experimentImagenetResNet50(experimentBase):
         super().__init__(configFile, multiprocessing)
         self.model = imagenet_resnet50()
 
-        datasetDir = self.config.dataTrainDir
+        datasetTrainDir = self.config.dataTrainDir
+        datasetValDir = self.config.dataValDir
         """
         Original training data augmentation for ResNet-50 training on ImageNet
         See Section 3.4 of the original ResNet paper.
@@ -61,7 +62,7 @@ class experimentImagenetResNet50(experimentBase):
             transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                  std=[0.229, 0.224, 0.225])
         ])
-        self.trainDataSet = datasets.ImageFolder(os.path.join(datasetDir, 'train'),
+        self.trainDataSet = datasets.ImageFolder(datasetTrainDir,
                                            transform=train_transform)
         self.trainDataSampler = distributed.DistributedSampler(
             self.trainDataSet, num_replicas=hvd.size(), rank=hvd.rank()
@@ -69,7 +70,7 @@ class experimentImagenetResNet50(experimentBase):
             else None
 
         # TODO: Check whether having multiple workers actually speed up data loading
-        dataLoaderKwargs = {'num_workers': 4}
+        dataLoaderKwargs = {'num_workers': 1}
 
         self.trainDataLoader = DataLoader(
             self.trainDataSet,
@@ -78,7 +79,7 @@ class experimentImagenetResNet50(experimentBase):
             shuffle=True if self.trainDataSampler is None else False,
             **dataLoaderKwargs
         )
-        self.valDataSet = datasets.ImageFolder(os.path.join(datasetDir, 'val'),
+        self.valDataSet = datasets.ImageFolder(datasetValDir,
                                            transform=val_transform)
 
         self.valDataSampler = distributed.DistributedSampler(

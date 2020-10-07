@@ -12,7 +12,7 @@
 #PBS -l select=8:ncpus=112
 ###PBS -l nodes=vsl042+vsl048+vsl047+vsl065+vsl066+vsl051+vsl052+vsl060
 ###Request exclusive placement on the node
-###PBS -l place=excl
+#PBS -l place=excl
 ###Name to appear on the job list
 #PBS -N qsub_train
 
@@ -66,9 +66,8 @@ time mpirun -x LD_LIBRARY_PATH \
     -x PATH \
     --map-by ppr:1:socket:pe=$num_core_per_socket --report-bindings \
     --oversubscribe -n $num_proc \
-    python CifarResNet56Experiment.py --mode train --config_file experiment_configs/config_cifar10_new_resnet56_sparsify_p1_prune_quantize_3.yaml \
-    --load_checkpoint 2 --checkpoint_path experiment_logs/cifar10_new_resnet56_sparsify_p1_prune_log/ckpt_cifar10_new_resnet56_sparsify_p1_prune_epoch32.pth.tar \
-    --multiprocessing  | tee output.txt
+    python ImagenetResNet50Experiment.py --mode train --config_file experiment_configs/config_imagenet_resnet50_baseline2.yaml \
+    --multiprocessing | tee output2.txt
 #time mpirun -x LD_LIBRARY_PATH \
 #    -x OMP_NUM_THREADS \
 #    -x PATH \

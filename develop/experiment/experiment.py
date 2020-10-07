@@ -534,14 +534,18 @@ class experimentBase(object):
                 if self.multiprocessing is False or (self.multiprocessing is True and hvd.rank() == 0):
                     print('Epoch: [{0}][{1}/{2}]\t'
                           'Loss {loss:.4f}\t'
-                          'Prec@1 {top1:.3f})'.format(
+                          'Prec@1 {top1:.3f})\t'
+                          'batch time {time:.6f} sec\t'
+                          'data loading time {dtime:.6f} sec'.format(
                         epoch, batchIdx, len(self.trainDataLoader),
                         loss=self.trainMeter.aggregateLoss.val,
-                        top1=self.trainMeter.aggregateAccuracyTop1.val))
+                        top1=self.trainMeter.aggregateAccuracyTop1.val,
+                        time=batchTime,
+                        dtime=dataLoadingTime))
 
-                    # Log the accuracy, and various losses, and timing for the last ten epoch
-                    self.trainMeter.log(float(epoch) + float(batchIdx)/len(self.trainDataLoader))
-                    self.trainTimeMeter.log(float(epoch) + float(batchIdx)/len(self.trainDataLoader))
+                    # Log the accuracy, and various losses, and timing for the last ten iter
+                    self.trainMeter.log((epoch*len(self.trainDataLoader) + batchIdx) *float(hvd.size()) / 16.0)
+                    self.trainTimeMeter.log((epoch*len(self.trainDataLoader) + batchIdx) *float(hvd.size()) / 16.0)
 
                 # Reset the train meter stats
                 self.trainMeter.reset()
