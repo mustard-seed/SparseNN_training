@@ -19,6 +19,7 @@ from easydict import EasyDict as edict
 import yaml
 import os
 from copy import deepcopy
+import numpy as np
 
 def find_conv1d_output_dim(inputDim: int,
                            inputBorderPadding: int,
@@ -481,21 +482,26 @@ class TraceDNN:
         # See https://stackoverflow.com/questions/56937691/making-yaml-ruamel-yaml-always-dump-lists-inline
         return yaml.dump(layerDict, fileStream, default_flow_style=None)
 
-    def dumpParameters(self, fileStream) -> str:
+    def dumpParameters(self, filename:str) -> None:
         """
         Flatten the parameter tensors, join them, and save the values to a yaml file
         :param fileStream:
         :return:
         """
-        parameterDict: dict = {}
-        for idx, blob in enumerate(self.parameters):
-            key = self.parameterKeys[idx]
-            data = blob.view(blob.numel()).tolist()
-            parameterDict[key] = data
+        # parameterDict: dict = {}
+        # for idx, blob in enumerate(self.parameters):
+        #     key = self.parameterKeys[idx]
+        #     data = blob.view(blob.numel()).tolist()
+        #     parameterDict[key] = data
 
         # We want list to be dumped as in-line format, hence the choice of the default_flow_style
         # See https://stackoverflow.com/questions/56937691/making-yaml-ruamel-yaml-always-dump-lists-inline
-        return yaml.dump(parameterDict, fileStream, default_flow_style=None)
+        # yaml.dump(parameterDict, filename, default_flow_style=None)
+        np.savez_compressed(filename,
+            **{self.parameterKeys[idx]: blob.view(blob.numel()).detach().numpy() for idx, blob in enumerate(self.parameters)})
+        np.savez_compressed(filename,
+                            **{self.parameterKeys[idx]: blob.view(blob.numel()).detach().numpy() for idx, blob in
+                               enumerate(self.parameters)})
 
     def dump(self, filePath: str, fileNameBase: str) -> None:
         """
@@ -507,17 +513,17 @@ class TraceDNN:
         :return: None
         """
         fullTracePath = os.path.join(filePath, fileNameBase+'_trace.yaml')
-        fullParameterPath = os.path.join(filePath, fileNameBase+'_parameters.yaml')
+        fullParameterPath = os.path.join(filePath, fileNameBase+'_parameters')
         traceFile = open(fullTracePath, 'w')
-        parameterFile = open(fullParameterPath, 'w')
+        # parameterFile = open(fullParameterPath, 'w')
 
         self.dumpTrace(traceFile)
         print("Tracer: saved trace to {}".format(fullTracePath))
-        self.dumpParameters(parameterFile)
-        print("Tracer: saved data to {}".format(fullParameterPath))
+        self.dumpParameters(fullParameterPath)
+        print("Tracer: saved data to {}".format(fullParameterPath+'.npz'))
 
         traceFile.close()
-        parameterFile.close()
+        #parameterFile.close()
 
     def traceHook(self, module, input: Union[T, Tuple[T, T]], output: T) -> T:
         """

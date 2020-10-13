@@ -46,7 +46,7 @@ def toy_resnet() -> resnet.ResNet:
             nn.init.zeros_(m.bias)
     return network
 
-def test_resnet() -> resnet.ResNet:
+def test_cifar10_resnet() -> resnet.ResNet:
     """
     Generate and initialize a toy resent with only 5 layers.
     Input size is compatiable with CIFAR-10
@@ -58,11 +58,41 @@ def test_resnet() -> resnet.ResNet:
     stage_planes_override = [16, 32, 64]
     stage_strides_override = [1, 2, 2]
     avgpool2d_kernelsize = 8
-    fc_input_number = 64
-    network = resnet.ResNet(block, num_blocks, 'test',
+    network = resnet.ResNet(block, num_blocks, 'cifar10', _flagTest=True,
                             _stage_planes_override=stage_planes_override,
                             _stage_strides_override=stage_strides_override,
-                            _fc_input_number_override= fc_input_number,
+                            _avgpool_2d_size_override= avgpool2d_kernelsize)
+    for m in network.modules():
+        if isinstance(m, nn.Conv2d):
+            nn.init.kaiming_normal_(m.weight, mode="fan_out")
+            # torch.nn.init.normal_(m.weight, mean=0.0, std=0.5)
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+        elif isinstance(m, nn.BatchNorm2d):
+            nn.init.ones_(m.weight)
+            nn.init.zeros_(m.bias)
+        elif isinstance(m, nn.Linear):
+            #HACK: need to centre the weights around a non-zero value for generating test trace,
+            #Otherwise too many frac bits
+            nn.init.kaiming_normal_(m.weight, mode="fan_out")
+            # torch.nn.init.normal_(m.weight, mean=0.0, std=0.5)
+            nn.init.zeros_(m.bias)
+    return network
+
+def test_imagenet_resnet() -> resnet.ResNet:
+    """
+    Input size is compatiable with IMAGENET-1K
+    :return: The ResNet-50 like network
+    """
+    block = resnet.BottleneckBlock
+    # Number of blocks per stage. Each stage has two parametrized layers
+    num_blocks = [1]
+    stage_planes_override = [512]
+    stage_strides_override = [2]
+    avgpool2d_kernelsize = 8
+    network = resnet.ResNet(block, num_blocks, 'imagenet1k', _flagTest=True,
+                            _stage_planes_override=stage_planes_override,
+                            _stage_strides_override=stage_strides_override,
                             _avgpool_2d_size_override= avgpool2d_kernelsize)
     for m in network.modules():
         if isinstance(m, nn.Conv2d):
@@ -272,9 +302,9 @@ class AvgPoolLinear(nn.Module):
                 torch.quantization.fuse_modules(m, ['0', '1'], inplace=True)
 
 class TracerTest():
-    def __init__(self, mode: str='resnet'):
+    def __init__(self, mode: str='test'):
         self.mode = mode
-        if self.mode == 'resnet':
+        if self.mode == 'test':
             self.model = toy_resnet()
         elif self.mode == 'tiny':
             self.model = TinyNet()
@@ -290,8 +320,10 @@ class TracerTest():
             self.model = Seq(in_planes=4, planes=8, stride=2)
         elif self.mode == 'avglinear':
             self.model = AvgPoolLinear(_inFeatures=4, _outFeatures=8)
-        elif self.mode == 'restest':
-            self.model = test_resnet()
+        elif self.mode == 'restest_cifar10':
+            self.model = test_cifar10_resnet()
+        elif self.mode == 'restest_imagenet':
+            self.model = test_imagenet_resnet()
         else:
             print(self.mode)
             raise ValueError('Unsupported mode')
@@ -358,15 +390,17 @@ class TracerTest():
                                                threshold=self.pruneThreshold)
 
     def trace(self, dirname: str, fileBaseName: str):
-        if self.mode == 'resnet':
+        if self.mode == 'test':
             dummyInput = torch.rand(size=[1, 3, 32, 32]) * (-1.0) + 4.0
         elif self.mode == 'add':
             # dummyInput = (torch.rand(size=[1, 4, 8, 8]) * (-1.0) + 4.0,
             #               torch.rand(size=[1, 4, 8, 8]) * (-1.0) + 4.0)
             dummyInput = (torch.rand(size=[1, 16, 8, 8]) * (4.0) - 2.0,
                           torch.rand(size=[1, 16, 8, 8]) * (2.0) - 1.0)
-        elif self.mode == 'restest':
+        elif self.mode == 'restest_cifar10':
             dummyInput = torch.rand(size=[1, 3, 32, 32]) * 4.0 - 2.0
+        elif self.mode == 'restest_imagenet':
+            dummyInput = torch.rand(size=[1, 3, 56, 56]) * 4.0 - 2.0
         else:
             dummyInput = torch.rand(size=[1, 4, 8, 8]) * (-1.0) + 4.0
 
@@ -417,15 +451,16 @@ class TracerTest():
 
 if __name__=='__main__':
     parser = argparse.ArgumentParser(description="testTracer")
-    parser.add_argument('--mode', type=str, choices=['tiny', 'conv', 'maxpool', 'add', 'avg', 'seq', 'avglinear',
-                                                     'restest'], default='conv',
-                        help='Mode. Valid choices are tiny, conv, maxpool, add, avg, seq, restest, and avglinear')
+    parser.add_argument('--mode', type=str, choices=['test', 'tiny', 'conv', 'maxpool', 'add', 'avg', 'seq', 'avglinear',
+                                                     'restest_cifar10', 'restest_imagenet'], default='conv',
+                        help='Mode. Valid choices are test, tiny, conv, maxpool, add, avg, seq, restest_cifar10, restest_imagenet,'
+                             'and avglinear')
     args = parser.parse_args()
 
     torch.manual_seed(0)
-    # if args.mode == 'resnet':
-    #     fileBaseName = 'testTrace'
-    if args.mode == 'tiny':
+    if args.mode == 'test':
+         fileBaseName = 'testTrace'
+    elif args.mode == 'tiny':
         fileBaseName = 'tinyTrace'
     elif args.mode == 'conv':
         fileBaseName = 'convTrace'
@@ -439,8 +474,10 @@ if __name__=='__main__':
         fileBaseName = 'seq'
     elif args.mode == 'avglinear':
         fileBaseName = 'avglinear'
-    elif args.mode == 'restest':
+    elif args.mode == 'restest_cifar10':
         fileBaseName = 'restest_resnet56_like'
+    elif args.mode == 'restest_imagenet':
+        fileBaseName = 'restest_imagenet'
     else:
         print(args.mode)
         raise ValueError("Unsupported mode")

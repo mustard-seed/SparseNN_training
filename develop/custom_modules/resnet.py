@@ -151,10 +151,10 @@ class ResNet(nn.Module):
     def __init__(self,
                  block:Union[BasicBlock,BottleneckBlock],
                  num_blocks:List[int],
-                 family:str ='cifar10',
+                 family: str='cifar10',
+                 _flagTest: bool= False,
                  _stage_planes_override=None,
                  _stage_strides_override=None,
-                 _fc_input_number_override=None,
                  _avgpool_2d_size_override=None):
         """
         Construct a resnet according to the specifications
@@ -185,21 +185,21 @@ class ResNet(nn.Module):
             self.in_kernel_size = 7
             self.in_stride = 2
             self.avgpool_2d_size = 7
-        elif family == 'test':
-            assert (_fc_input_number_override is not None) and (_avgpool_2d_size_override is not None) and \
+        else:
+            raise ValueError('Unsupported ResNet variant')
+
+        if _flagTest == True:
+            assert (_avgpool_2d_size_override is not None) and \
                    isinstance(_stage_planes_override, list) and isinstance(_stage_strides_override, list), \
                 'Not sufficient arguments provided by the test ResNet variant'
             self.stage_planes = deepcopy(_stage_planes_override)
             self.stage_strides = deepcopy(_stage_strides_override)
-            self.num_classes = 10
-            self.fc_input_number = _fc_input_number_override
-            self.in_planes = 16
+            self.num_classes = 1000 if family == 'imagenet1k' else 10
+            self.fc_input_number = _stage_planes_override[-1] * block.expansion
+            self.in_planes = _stage_planes_override[0]
             self.in_kernel_size = 3
             self.in_stride = 1
             self.avgpool_2d_size = _avgpool_2d_size_override
-
-        else:
-            raise ValueError('Unsupported ResNet variant')
 
         self.avgpool_divisor = math.ceil(math.pow(2.0, math.log2(self.avgpool_2d_size*self.avgpool_2d_size)))
 
