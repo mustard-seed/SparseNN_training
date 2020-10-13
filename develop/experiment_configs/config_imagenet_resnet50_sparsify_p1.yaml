@@ -3,7 +3,7 @@
 #See Section 4.2 of Deep Residual Learning for Image Classification for settings
 
 # Iterations, etc
-numEpochToTrain: 40
+numEpochToTrain: 15
 batchSizePerWorker: 32
 numThreadsPerWorker: 28
 
@@ -20,26 +20,30 @@ numThreadsPerWorker: 28
 # The longer the training takes on the cluster, the more the chance it will run into some kind of error
 # So we increase the unattenuated per-worker learning rate to 0.0125 (2x)
 # We cool the learning schedule faster than the original ImageNet.
-#The schedule as published seems to be too conservative
-lrInitialBase: 0.0125
-lrPeakBase: 0.0125
+# Sparsification:
+#   - Prior to sparsification, the baseline's learning rate per-worker is 0.0000125
+#   - We note that when the learning rate per worker was adjusted 0.00125, the top-1 accuracy was already more than 50%
+#   - We speculate that the sparsification loss would drive the accuracy back to around 50% top-1 validation accuracy
+#   - So set the initial learning rate 0.00125
+lrInitialBase: 0.00125
+lrPeakBase: 0.00125
 lrWarmupEpochs: 1
-lrStepSize: 10
+lrStepSize: 5
 lrReductionFactor: 0.1
 lrMomentum: 0.9
 lrMPAdjustmentWarmUpEpochs: 3
 
 # Loss contribution
-enableLossActivation: False
-enableLossWeightL1: False
+enableLossActivation: True
+enableLossWeightL1: True
 enableLossWeightL2: True
-lossActivationLambda: 0.00002
-lossWeightL1Lambda: 0.00002
+lossActivationLambda: 0.00005
+lossWeightL1Lambda: 0.00005
 lossWeightL2Lambda: 0.0001
 
 # Pruning and quantization parameters
 prune: False
-pruneCluster: 4
+pruneCluster: 1
 pruneThreshold: 0.005
 quantize: False
 numUpdateBNStatsEpochs: 100
@@ -53,8 +57,8 @@ dataTrainDir: '/homes/jmusel/jmuse/imagenet/train'
 dataValDir: '/homes/jmusel/jmuse/imagenet/val'
 
 # Checkpoints
-checkpointSaveDir: 'experiment_logs/imagenet_resnet50_baseline2_log'
-checkpointSaveFileNameFormat: 'ckpt_baseline_epoch{}.pth.tar'
+checkpointSaveDir: 'experiment_logs/imagenet_resnet50_sparsify_p1'
+checkpointSaveFileNameFormat: 'ckpt_sparsify_p1_epoch{}.pth.tar'
 
 # Log Dir
-logDir: 'experiment_logs/imagenet_resnet50_baseline2_log'
+logDir: 'experiment_logs/imagenet_resnet50_sparsify_p1_log'
