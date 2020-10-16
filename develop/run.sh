@@ -73,9 +73,9 @@ time mpirun -x LD_LIBRARY_PATH \
     -x PATH \
     --map-by ppr:1:socket:pe=$num_core_per_socket --report-bindings \
     --oversubscribe -n $num_proc \
-    python ImagenetResNet50Experiment.py --mode train --config_file experiment_configs/config_imagenet_resnet50_sparsify_p1_prune.yaml \
+    python ImagenetResNet50Experiment.py --mode train --config_file experiment_configs/config_imagenet_resnet50_sparsify_p1_prune_quantize.yaml \
     --load_checkpoint 2  \
-    --checkpoint_path experiment_logs/imagenet_resnet50_sparsify_p1_try2_log/ckpt_sparsify_p1_epoch14.pth.tar \
+    --checkpoint_path experiment_logs/imagenet_resnet50_sparsify_p1_prune_log/ckpt_sparsify_p1_prune_epoch3.pth.tar \
     --multiprocessing  | tee output.txt
 #time mpirun -x LD_LIBRARY_PATH \
 #      -x OMP_NUM_THREADS \
