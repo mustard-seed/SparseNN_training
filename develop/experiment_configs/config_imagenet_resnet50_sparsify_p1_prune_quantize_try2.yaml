@@ -2,7 +2,7 @@
 #Configuration for training baseline ResNet-50 on ImageNet 1K
 
 # Iterations, etc
-numEpochToTrain: 10
+numEpochToTrain: 12
 batchSizePerWorker: 32
 numThreadsPerWorker: 28
 
@@ -30,14 +30,16 @@ numThreadsPerWorker: 28
 #   - So maybe set the inital learning rate to be 10x higher, 0.000125
 # Quantization:
 #   - Prior to quantization, the learning rate per worker is 0.000125
-#   - Keep this learning rate for 5 epochs
-#   - Freeze BN stats and after 2 epochs
-#   - Freeze QAT observer stats after 3 epochs
+#   - But enabling QAT plummet the accuracy to less than **1%**. Therefore, let's restore to a higher learning rate
+#         0.0125
+#   - Keep this learning rate for 4 epochs
+#   - Freeze BN stats and after 5 epochs
+#   - Freeze QAT observer stats after 6 epochs
 #   - Then attenuate it by a factor of 10
-lrInitialBase: 0.000125
-lrPeakBase: 0.000125
+lrInitialBase: 0.00125
+lrPeakBase: 0.00125
 lrWarmupEpochs: 1
-lrStepSize: 5
+lrStepSize: 4
 lrReductionFactor: 0.1
 lrMomentum: 0.9
 lrMPAdjustmentWarmUpEpochs: 1
@@ -53,10 +55,10 @@ lossWeightL2Lambda: 0.0001
 # Pruning and quantization parameters
 prune: True
 pruneCluster: 1
-pruneThreshold: 0.005
+pruneThreshold: 0.00001
 quantize: True
-numUpdateBNStatsEpochs: 2
-numUpdateQatObserverEpochs: 3
+numUpdateBNStatsEpochs: 5
+numUpdateQatObserverEpochs: 6
 
 # See
 seed: 47
@@ -66,8 +68,8 @@ dataTrainDir: '/homes/jmusel/jmuse/imagenet/train'
 dataValDir: '/homes/jmusel/jmuse/imagenet/val'
 
 # Checkpoints
-checkpointSaveDir: 'experiment_logs/imagenet_resnet50_sparsify_p1_prune_quantize_log'
+checkpointSaveDir: 'experiment_logs/imagenet_resnet50_sparsify_p1_prune_quantize_try2_log'
 checkpointSaveFileNameFormat: 'ckpt_sparsify_p1_prune_quantize_epoch{}.pth.tar'
 
 # Log Dir
-logDir: 'experiment_logs/imagenet_resnet50_sparsify_p1_prune_quantize_log'
+logDir: 'experiment_logs/imagenet_resnet50_sparsify_p1_prune_quantize_try2_log'
