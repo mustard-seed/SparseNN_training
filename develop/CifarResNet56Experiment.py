@@ -157,7 +157,7 @@ class experimentCifar10ResNet56(experimentBase):
                 blockId += 1
 
     # Override the evaluate_sparsity function
-    def evaluate_sparsity(self) -> (list, list, list):
+    def evaluate_sparsity(self, numBatches=None) -> (list, list, list):
         """
         Evaluate the activation and weight sparsity of the model on the entire validation set
         :return: Three lists. List one for the average activation sparsity per layer
@@ -284,6 +284,8 @@ class experimentCifar10ResNet56(experimentBase):
         weightSparsityList = generate_sparsity_list(weightList)
         activationSparsityList = None
 
+        numBatchesToRun = len(self.valDataLoader) if numBatches is None else numBatches
+        iterBatch = 0
         with torch.no_grad():
             for batchIdx, (data, target) in enumerate(self.valDataLoader):
                 activationList.clear()
@@ -293,8 +295,10 @@ class experimentCifar10ResNet56(experimentBase):
                     activationSparsityList = np.zeros_like(batchActivationSparsityList)
 
                 activationSparsityList = np.add(batchActivationSparsityList, activationSparsityList)
+                if iterBatch == numBatchesToRun:
+                    break
                 # End of iteration of all validation data
-            activationSparsityList = activationSparsityList / float(len(self.valDataLoader))
+            activationSparsityList = activationSparsityList / float(numBatchesToRun)
 
         return activationSparsityList, weightSparsityList, layerNameList
         # End of evaluate sparsity

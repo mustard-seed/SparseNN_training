@@ -183,7 +183,7 @@ class experimentImagenetResNet50(experimentBase):
                 blockId += 1
 
     # Override the evaluate_sparsity function
-    def evaluate_sparsity(self) -> (list, list, list):
+    def evaluate_sparsity(self, numBatches=None) -> (list, list, list):
         """
         Evaluate the activation and weight sparsity of the model on the entire validation set
         :return: Three lists. List one for the average activation sparsity per layer
@@ -221,8 +221,8 @@ class experimentImagenetResNet50(experimentBase):
                     layerNameList.append('Input ConvBNReLU')
                 elif isinstance(target, nn.Sequential):
                     for m in target.modules():
-                        if isinstance(m, BasicBlock):
-                            for layerId, layer in enumerate([m.convBN1, m.convBN2]):
+                        if isinstance(m, BottleneckBlock):
+                            for layerId, layer in enumerate([m.convBN1, m.convBN2, m.convBN3]):
                                 name = 'block_{}_layer{}'.format(blockId, layerId)
                                 if needPrune is True:
                                     custom_pruning.applyClusterPruning(
@@ -275,7 +275,7 @@ class experimentImagenetResNet50(experimentBase):
                     interceptHandle = target.register_forward_hook(intercept_activation)
                     interceptHandleList.append(interceptHandle)
                     weightList.append(target.weight.detach().clone())
-                    layerNameList.append('final classification')
+                    layerNameList.append('classification')
 
             return interceptHandleList, weightList, layerNameList
         #End of helper function evaluate_setup
@@ -316,8 +316,11 @@ class experimentImagenetResNet50(experimentBase):
         weightSparsityList = generate_sparsity_list(weightList)
         activationSparsityList = None
 
+        numBatchesToRun = len(self.valDataLoader) if numBatches is None else numBatches
+        iterBatch = 0
         with torch.no_grad():
             for batchIdx, (data, target) in enumerate(self.valDataLoader):
+                print("Runing batch {}".format(iterBatch))
                 activationList.clear()
                 output = evaluatedModel(data)
                 batchActivationSparsityList = np.array(generate_sparsity_list(activationList))
@@ -325,8 +328,11 @@ class experimentImagenetResNet50(experimentBase):
                     activationSparsityList = np.zeros_like(batchActivationSparsityList)
 
                 activationSparsityList = np.add(batchActivationSparsityList, activationSparsityList)
+                iterBatch += 1
+                if iterBatch == numBatchesToRun:
+                    break
                 # End of iteration of all validation data
-            activationSparsityList = activationSparsityList / float(len(self.valDataLoader))
+            activationSparsityList = activationSparsityList / float(numBatchesToRun)
 
         return activationSparsityList, weightSparsityList, layerNameList
         # End of evaluate sparsity
@@ -396,7 +402,7 @@ if __name__ == '__main__':
         newConfigFilePath = os.path.join(logPath, configFileName)
         shutil.copy(args.config_file, newConfigFilePath)
     elif args.mode == 'evaluate_sparsity':
-        experiment.save_sparsity_stats(args.override_cluster_size)
+        experiment.save_sparsity_stats(args.override_cluster_size, numBatches=20)
     elif args.mode == 'print_model':
         experiment.print_model()
     elif args.mode == 'trace_model':

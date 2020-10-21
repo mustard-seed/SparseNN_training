@@ -618,7 +618,7 @@ class experimentBase(object):
 
         remove_hook_activation(forwardHookHandlesDict=fowardHookHandles)
 
-    def evaluate_sparsity(self) -> (list, list, list):
+    def evaluate_sparsity(self, numBatches=None) -> (list, list, list):
         """
         Evaluate the activation and weight sparsity of the model on the entire validation set
         :return: Three lists. List one for the average activation sparsity per layer
@@ -694,8 +694,11 @@ class experimentBase(object):
         weightSparsityList = generate_sparsity_list(weightList)
         activationSparsityList = None
 
+        numBatchesToRun = len(self.valDataLoader) if numBatches is None else numBatches
+        iterBatch = 0
         with torch.no_grad():
             for batchIdx, (data, target) in enumerate(self.valDataLoader):
+                print("Runing batch {}".format(iterBatch))
                 activationList.clear()
                 output = evaluatedModel(data)
                 batchActivationSparsityList = np.array(generate_sparsity_list(activationList))
@@ -703,18 +706,21 @@ class experimentBase(object):
                     activationSparsityList = np.zeros_like(batchActivationSparsityList)
 
                 activationSparsityList = np.add(batchActivationSparsityList, activationSparsityList)
+                iterBatch += 1
+                if iterBatch == numBatchesToRun:
+                    break
                 # End of iteration of all validation data
-            activationSparsityList = activationSparsityList / float(len(self.valDataLoader))
+            activationSparsityList = activationSparsityList / float(numBatchesToRun)
 
         return activationSparsityList, weightSparsityList, layerNameList
         # End of evaluate sparsity
 
-    def save_sparsity_stats(self, desiredClusterSize=None):
+    def save_sparsity_stats(self, desiredClusterSize=None, numBatches=None):
         if desiredClusterSize is not None:
             print('Overriding the cluster size in the config to ', desiredClusterSize)
             self.config.pruneCluster = desiredClusterSize
 
-        activationSparsityList, weightSparsityList, layerNameList = self.evaluate_sparsity()
+        activationSparsityList, weightSparsityList, layerNameList = self.evaluate_sparsity(numBatches=numBatches)
         filepath = os.path.join(self.config.logDir, 'sparsity_stats_cluster{}.csv'.format(self.config.pruneCluster))
         with open(filepath, 'w', newline='') as csvfile:
             fieldnames = ['Layer_Name', 'Weight_Sparsity', 'Activation_Sparsity']
