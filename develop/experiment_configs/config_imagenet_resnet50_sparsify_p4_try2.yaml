@@ -25,14 +25,6 @@ numThreadsPerWorker: 28
 #   - We note that when the learning rate per worker was adjusted 0.00125, the top-1 accuracy was already more than 50%
 #   - We speculate that the sparsification loss would drive the accuracy back to around 50% top-1 validation accuracy
 #   - So set the initial learning rate 0.00125
-# Pruning & quantization:
-#   - Prior to pruning, the learning rate per worker is 0.0000125
-#   - We speculate the pruning would perturb the model, and drive down the accuracy by about 5% initially
-#   - So maybe set the inital learning rate to be 100x higher, 0.00125
-#   - Keep this learning rate for 4 epochs
-#   - Freeze BN stats and after 5 epochs
-#   - Freeze QAT observer stats after 6 epochs
-#   - Then attenuate it by a factor of 10
 lrInitialBase: 0.00125
 lrPeakBase: 0.00125
 lrWarmupEpochs: 1
@@ -45,18 +37,17 @@ lrMPAdjustmentWarmUpEpochs: 1
 enableLossActivation: True
 enableLossWeightL1: True
 enableLossWeightL2: True
-lossActivationLambda: 0.0000005
-lossWeightL1Lambda: 0.000005
+lossActivationLambda: 0.000002
+lossWeightL1Lambda: 0.00005
 lossWeightL2Lambda: 0.0001
 
 # Pruning and quantization parameters
-prune: True
+prune: False
 pruneCluster: 4
-# pruneThreshold: 0.00001
 pruneThreshold: 0.005
-quantize: True
-numUpdateBNStatsEpochs: 4
-numUpdateQatObserverEpochs: 5
+quantize: False
+numUpdateBNStatsEpochs: 100
+numUpdateQatObserverEpochs: 100
 
 # See
 seed: 47
@@ -65,9 +56,10 @@ seed: 47
 dataTrainDir: '/homes/jmusel/jmuse/imagenet/train'
 dataValDir: '/homes/jmusel/jmuse/imagenet/val'
 
+
 # Checkpoints
-checkpointSaveDir: 'experiment_logs/imagenet_resnet50_sparsify_p4_prune_quantize_log'
-checkpointSaveFileNameFormat: 'ckpt_sparsify_p4_prune_quantize_epoch{}.pth.tar'
+checkpointSaveDir: 'experiment_logs/imagenet_resnet50_sparsify_p4_try2_log'
+checkpointSaveFileNameFormat: 'ckpt_sparsify_p4_try2_epoch{}.pth.tar'
 
 # Log Dir
-logDir: 'experiment_logs/imagenet_resnet50_sparsify_p4_prune_quantize_log'
+logDir: 'experiment_logs/imagenet_resnet50_sparsify_p4_try2_log'
