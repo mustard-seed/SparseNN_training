@@ -182,6 +182,39 @@ class Conv(nn.Module):
             elif type(m) == cm.ConvBN:
                 torch.quantization.fuse_modules(m, ['0', '1'], inplace=True)
 
+class ResNet50_conv12(nn.Module):
+    """
+    Tiny-Net just for generating a trace purpose
+    """
+    def __init__(self):
+        super().__init__()
+        self.block = resnet.conv1x1BN(in_planes=256, out_planes=64, stride=1, groups=1, dilation=1, require_relu=True)
+        self.quant = QuantStub()
+        self.dequant = DeQuantStub()
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out")
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+    def forward(self, x):
+        x = self.quant(x)
+        x = self.block(x)
+        output = self.dequant(x)
+
+        return output
+
+        # Fuse layers prior to quantization
+
+    def fuse_model(self):
+        for m in self.modules():
+            if type(m) == cm.ConvBNReLU:
+                # Fuse the layers in ConvBNReLU module, which is derived from nn.Sequential
+                # Use the default fuser function
+                torch.quantization.fuse_modules(m, ['0', '1', '2'], inplace=True)
+            elif type(m) == cm.ConvBN:
+                torch.quantization.fuse_modules(m, ['0', '1'], inplace=True)
+
 class Seq(nn.Module):
     """
     Two convolution layer back to back
@@ -324,6 +357,8 @@ class TracerTest():
             self.model = test_cifar10_resnet()
         elif self.mode == 'restest_imagenet':
             self.model = test_imagenet_resnet()
+        elif self.mode == 'resnet50_conv12':
+            self.model = ResNet50_conv12()
         else:
             print(self.mode)
             raise ValueError('Unsupported mode')
@@ -401,6 +436,8 @@ class TracerTest():
             dummyInput = torch.rand(size=[1, 3, 32, 32]) * 4.0 - 2.0
         elif self.mode == 'restest_imagenet':
             dummyInput = torch.rand(size=[1, 3, 56, 56]) * 4.0 - 2.0
+        elif self.mode == 'resnet50_conv12':
+            dummyInput = torch.rand(size=[1,256,56, 56]) * 4.0 - 2.0
         else:
             dummyInput = torch.rand(size=[1, 4, 8, 8]) * (-1.0) + 4.0
 
@@ -452,9 +489,9 @@ class TracerTest():
 if __name__=='__main__':
     parser = argparse.ArgumentParser(description="testTracer")
     parser.add_argument('--mode', type=str, choices=['test', 'tiny', 'conv', 'maxpool', 'add', 'avg', 'seq', 'avglinear',
-                                                     'restest_cifar10', 'restest_imagenet'], default='conv',
+                                                     'restest_cifar10', 'restest_imagenet', 'resnet50_conv12'], default='conv',
                         help='Mode. Valid choices are test, tiny, conv, maxpool, add, avg, seq, restest_cifar10, restest_imagenet,'
-                             'and avglinear')
+                             'resnet50_conv12, and avglinear')
     args = parser.parse_args()
 
     torch.manual_seed(0)
@@ -478,6 +515,8 @@ if __name__=='__main__':
         fileBaseName = 'restest_resnet56_like'
     elif args.mode == 'restest_imagenet':
         fileBaseName = 'restest_imagenet'
+    elif args.mode == 'resnet50_conv12':
+        fileBaseName = 'resnet50_conv12'
     else:
         print(args.mode)
         raise ValueError("Unsupported mode")
