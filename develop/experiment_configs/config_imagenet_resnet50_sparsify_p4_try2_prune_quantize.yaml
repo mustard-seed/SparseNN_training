@@ -44,11 +44,11 @@ lrMPAdjustmentWarmUpEpochs: 1
 
 # Loss contribution
 enableLossActivation: True
-enableLossWeightL1: True
+enableLossWeightL1: False
 enableLossWeightL2: True
 lossActivationLambda: 0.000002
-# Try to remove weight sparsification loss during pruning/quantization
-lossWeightL1Lambda: 0.0000
+# Try to remove weight sparsification loss during qpruning/quantization
+lossWeightL1Lambda: 0.00005
 lossWeightL2Lambda: 0.0001
 
 # Pruning and quantization parameters
