@@ -402,6 +402,9 @@ class experimentBase(object):
             self.experimentStatus.numPhaseTrained = 0
 
         # Load the model
+        # If pruning and quantization are both required,
+        # then prune before quantize.
+        # Otherwise the model might be pruned twice
         if experimentStatus.flagPruned is True:
             # If the network has been sparsified, then it no longer has
             # 'weight' as a registered buffer.

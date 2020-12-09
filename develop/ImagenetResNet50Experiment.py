@@ -306,11 +306,15 @@ class experimentImagenetResNet50(experimentBase):
             self.quantize_model()
             self.experimentStatus.flagFusedQuantized = True
 
+        # Bake in the sparsity
+        if self.experimentStatus.flagPruned is True:
+            custom_pruning.unPruneNetwork(self.model)
+
         evaluatedModel = self.model
 
         # Apply pruning mask, and activation interception, extract weight
         interceptHandleList, weightList, layerNameList = \
-            evaluate_setup(evaluatedModel, self.experimentStatus.flagPruned is False)
+            evaluate_setup(evaluatedModel, True)
 
         # Compute weight sparsity
         weightSparsityList = generate_sparsity_list(weightList)
@@ -338,33 +342,46 @@ class experimentImagenetResNet50(experimentBase):
         # End of evaluate sparsity
 
 
-    def prune_network(self) -> None:
-        custom_pruning.applyClusterPruning(
-            self.model.inputConvBNReLU[0],
-            'weight',
-            clusterSize=self.config.pruneCluster,
-            threshold=self.config.pruneThreshold
-        )
+    def prune_network(self, sparsityTarget: float=0.5) -> None:
+        # Don't prune the first layer
+        # custom_pruning.applyBalancedPruning(
+        #     self.model.inputConvBNReLU[0],
+        #     'weight',
+        #     clusterSize=self.config.pruneCluster,
+        #     pruneRangeInCluster=self.config.pruneRangeInCluster
+        #     sparsity=0.0
+        # )
 
+        # Prune the residual blocks
         for m in self.model.modules():
             if isinstance(m, BottleneckBlock):
-                custom_pruning.applyClusterPruning(m.convBN1[0],
-                                                   "weight",
-                                                   clusterSize=self.config.pruneCluster,
-                                                   threshold=self.config.pruneThreshold)
-                custom_pruning.applyClusterPruning(m.convBN2[0],
-                                                   "weight",
-                                                   clusterSize=self.config.pruneCluster,
-                                                   threshold=self.config.pruneThreshold)
-                custom_pruning.applyClusterPruning(m.convBN3[0],
-                                                   "weight",
-                                                   clusterSize=self.config.pruneCluster,
-                                                   threshold=self.config.pruneThreshold)
-                if isinstance(m.shortcut, ConvBN):
-                    custom_pruning.applyClusterPruning(m.shortcut[0],
-                                                       "weight",
-                                                       clusterSize=self.config.pruneCluster,
-                                                       threshold=self.config.pruneThreshold)
+                for layer in [m.convBN1[0], m.convBN2[0], m.convBN3[0], m.shortcut]:
+                    if not isinstance(layer, nn.Identity):
+                        # Special case for short-cut
+                        if isinstance(layer, (ConvBN, ConvBNReLU)):
+                            layer = layer[0]
+                        sparsity = sparsityTarget
+                        # cap the sparsity-level of layers in residual blocks
+                        # that see change in the number of channels to 50%
+                        if layer.in_channels != layer.out_channels:
+                            sparsity = 0.5
+                        custom_pruning.applyBalancedPruning(
+                            layer,
+                            'weight',
+                            clusterSize=self.config.pruneCluster,
+                            pruneRangeInCluster=self.config.pruneRangeInCluster,
+                            sparsity=sparsity
+                        )
+
+        # Prune the FC layer at the end
+        custom_pruning.applyBalancedPruning(
+            self.model.fc,
+            'weight',
+            clusterSize=self.config.pruneCluster,
+            pruneRangeInCluster=self.config.pruneRangeInCluster,
+            sparsity=sparsityTarget
+        )
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Imagenet_ResNet50 experiment")
