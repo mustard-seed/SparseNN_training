@@ -164,22 +164,24 @@ class experimentLeNet(experimentBase):
     def extract_weight(self, module: torch.nn.Module) -> None:
         super().extract_weight(module)
 
-    def prune_network(self) -> None:
+    def prune_network(self, sparsityTarget) -> None:
         pruneList = [self.model.convBN1, self.model.convBN2, self.model.fc1,
                      self.model.fc2, self.model.fc3]
         for m in pruneList:
             if isinstance(m, (ConvBNReLU, ConvReLU, LinearReLU)):
                 layer = list(m.children())[0]
-                custom_pruning.applyClusterPruning(layer,
+                custom_pruning.applyBalancedPruning(layer,
                                                    "weight",
                                                    clusterSize=self.config.pruneCluster,
-                                                   threshold=self.config.pruneThreshold)
+                                                    pruneRangeInCluster=self.config.pruneRangeInCluster,
+                                                   sparsity=sparsityTarget)
             elif isinstance(m, nn.Linear):
                 layer = m
-                custom_pruning.applyClusterPruning(layer,
-                                                   "weight",
-                                                   clusterSize=self.config.pruneCluster,
-                                                   threshold=self.config.pruneThreshold)
+                custom_pruning.applyBalancedPruning(layer,
+                                                    "weight",
+                                                    clusterSize=self.config.pruneCluster,
+                                                    pruneRangeInCluster=self.config.pruneRangeInCluster,
+                                                    sparsity=sparsityTarget)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="LeNet experiment")
@@ -193,6 +195,8 @@ if __name__ == '__main__':
                         help='Enable multiprocessing (using Horovod as backend). Default: False')
     parser.add_argument('--checkpoint_path', type=str,
                         help='Path to the checkpoint to be loaded. Required if --load_checkpoint is set as 1 or 2')
+    parser.add_argument('--override_cluster_size', type=int,
+                        help='Override the cluster size in the experiment config when performing sparsity evaluation')
 
     args = parser.parse_args()
     if args.multiprocessing is True:
@@ -213,4 +217,9 @@ if __name__ == '__main__':
         newConfigFilePath = os.path.join(logPath, configFileName)
         shutil.copy(args.config_file, newConfigFilePath)
     elif args.mode == 'evaluate_sparsity':
-        experiment.save_sparsity_stats()
+        experiment.save_sparsity_stats(args.override_cluster_size, numBatches=100)
+    elif args.mode == 'print_model':
+        experiment.print_model()
+    elif args.mode == 'trace_model':
+        experiment.trace_model(dirnameOverride=os.getcwd(), numMemoryRegions=3, modelName='resnet50_imagenet',
+                               foldBN=True)

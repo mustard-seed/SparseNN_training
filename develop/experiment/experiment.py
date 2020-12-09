@@ -1,6 +1,6 @@
 import quantization.quantization as custom_quant
 import pruning.pruning as custom_prune
-from pruning.pruning import compute_mask
+from pruning.pruning import compute_group_lasso_mask, compute_balanced_pruning_mask
 from utils.meters import TimeMeter
 from tracer.tracer import TraceDNN as Tracer
 
@@ -48,11 +48,16 @@ def generate_experiment_status():
     config.flagFusedQuantized = False
     config.flagPruned = False
     config.numEpochTrained = 0
+    # TODO: Newly added Dec. 2020
+    config.numPhaseTrained = 0
+    config.targetSparsity = 0.0
     return config
 
 def generate_base_config():
     config = edict()
     config.numEpochToTrain = 1
+    # TODO: Newly added Dec. 2020
+    config.numPhaseToTrain = 1
     config.batchSizePerWorker = 32
     config.numThreadsPerWorker = 28
     config.trainEpochs = 20
@@ -77,8 +82,10 @@ def generate_base_config():
 
     # Pruning paramters
     config.prune = False
-    config.pruneCluster = 1
+    config.pruneCluster = 2
     config.pruneThreshold = 1e-5
+    config.pruneRangeInCluster = 8
+    config.sparsityIncrement = 0.125
     config.quantize = False
     config.numUpdateBNStatsEpochs = 100
     config.numUpdateQatObserverEpochs = 100
@@ -180,7 +187,6 @@ class experimentBase(object):
                 config = edict(yamlConfig)
 
         # Broadcast the configuration to the workers during multiprocessing
-        # TODo: Will this work?
         if multiprocessing is True:
             config = hvd.broadcast_object(obj=config, root_rank=0, name='config')
 
@@ -245,7 +251,7 @@ class experimentBase(object):
                 self.extract_weight(m)
 
     @abstractmethod
-    def prune_network(self) -> None:
+    def prune_network(self, sparsityTarget: float = 0.5) -> None:
         """
         Prunes the network according.
         Derived classes should specify which layers should pruned
@@ -306,19 +312,17 @@ class experimentBase(object):
         :param inpLace: Whether the quantization should be done in place
         :return: None
         """
-        needToPrune = False
+        needToReapplyWeightMask = False
         if self.experimentStatus.flagPruned is True:
             custom_prune.unPruneNetwork(self.model)
-            needToPrune = True
-            self.experimentStatus.flagPruned = False
+            needToReapplyWeightMask = True
 
         self.model.fuse_model()
         self.model.qconfig = self.qatConfig
         torch.quantization.prepare_qat(self.model, inplace=True)
 
-        if needToPrune is True:
-            self.prune_network()
-            self.experimentStatus.flagPruned = True
+        if needToReapplyWeightMask is True:
+            self.prune_network(sparsityTarget=self.experimentStatus.targetSparsity)
 
     def initialize_optimizer (self):
         """
@@ -369,6 +373,7 @@ class experimentBase(object):
         :return: None
         """
 
+        #Broadcast the experiment status to all workers
         if self.multiprocessing is True:
             if hvd.rank() == 0:
                 state_dict = torch.load(checkpoint)
@@ -379,26 +384,38 @@ class experimentBase(object):
             state_dict = torch.load(checkpoint)
 
         experimentStatus = state_dict['experimentStatus']
-        self.experimentStatus = experimentStatus
-        self.experimentStatus.numEpochTrained = 0
-        config = state_dict['experimentConfig']
+        #self.experimentStatus = experimentStatus
+        for selfKey in self.experimentStatus.keys():
+            if selfKey in experimentStatus.keys():
+                self.experimentStatus[selfKey] = experimentStatus[selfKey]
+        # self.experimentStatus.numEpochTrained = 0
         if loadModelOnly is False:
-            self.config = config
+            config = state_dict['experimentConfig']
+            # self.config = config
+            for selfKey in self.config.keys():
+                if selfKey in config.keys():
+                    self.config[selfKey] = config[selfKey]
             # Save the optimizer state
             self.optimizerStateDict = state_dict['optimizer']
+        else:
+            self.experimentStatus.numEpochTrained = 0
+            self.experimentStatus.numPhaseTrained = 0
 
         # Load the model
+        if experimentStatus.flagPruned is True:
+            # If the network has been sparsified, then it no longer has
+            # 'weight' as a registered buffer.
+            # Instead, it has weight_orig and weight_mask
+            # We need to allocate a sparsified network before loading the model's state dict
+            # The target sparsity used to allocate the "sparsified network" can be random
+            self.prune_network(sparsityTarget=0.0)
+
         # Check for whether it makes sense to load a quantized experiment
         # If so, quantize the model before proceed with loading
         if experimentStatus.flagFusedQuantized is True:
             assert self.config.quantize is True, \
                 'Loaded experiment contains quantized model, but the experiment config does not require quantization'
             self.quantize_model()
-
-        if experimentStatus.flagPruned is True:
-            assert self.config.prune is True, \
-                'Loaded experiment contains pruned model, but the experiment config does not require pruning'
-            self.prune_network()
 
         self.restore_model_from_state_dict(state_dict['model'])
 
@@ -410,13 +427,16 @@ class experimentBase(object):
         :return: None
         """
         if (self.multiprocessing is False) or (self.multiprocessing is True and hvd.rank() == 0):
-            recoverPrune = False
-            if self.experimentStatus.flagPruned is True:
-                recoverPrune = True
-                self.experimentStatus.flagPruned = False
-                custom_prune.unPruneNetwork(self.model)
+            # recoverPrune = False
+            # if self.experimentStatus.flagPruned is True:
+            #     recoverPrune = True
+            #     self.experimentStatus.flagPruned = False
+            #     custom_prune.unPruneNetwork(self.model)
 
-            filename = self.config.checkpointSaveFileNameFormat.format(self.experimentStatus.numEpochTrained)
+            actualEpochTrained = \
+                self.experimentStatus.numPhaseTrained * self.config.numEpochToTrain \
+                + self.experimentStatus.numEpochTrained
+            filename = self.config.checkpointSaveFileNameFormat.format(actualEpochTrained)
             if not os.path.exists(filePath):
                 os.makedirs(filePath)
             path = os.path.join(filePath, filename)
@@ -428,9 +448,9 @@ class experimentBase(object):
             }
             torch.save(state, path)
 
-            if recoverPrune:
-                self.experimentStatus.flagPruned = True
-                self.prune_network()
+            # if recoverPrune:
+            #     self.experimentStatus.flagPruned = True
+            #     self.prune_network()
 
     def evaluate(self, data, target, isTrain=False) -> torch.Tensor:
         """
@@ -532,20 +552,32 @@ class experimentBase(object):
             self.trainTimeMeter.update(dataLoadingTime=torch.tensor(dataLoadingTime), batchTime=torch.tensor(batchTime))
             if int(batchIdx+1) % 10 == 0:
                 if self.multiprocessing is False or (self.multiprocessing is True and hvd.rank() == 0):
-                    print('Epoch: [{0}][{1}/{2}]\t'
+                    print('Phase: {phase}\t'
+                          'Epoch: [{0}][{1}/{2}]\n'
                           'Loss {loss:.4f}\t'
                           'Prec@1 {top1:.3f})\t'
                           'batch time {time:.6f} sec\t'
-                          'data loading time {dtime:.6f} sec'.format(
+                          'data loading time {dtime:.6f} sec\n'
+                          'Quantized: {quantized}\t'
+                          'Pruned: {pruned}\t'
+                          'Target Sparsity: {sparsity:.4f}'.format(
                         epoch, batchIdx, len(self.trainDataLoader),
+                        phase = self.experimentStatus.numPhaseTrained,
                         loss=self.trainMeter.aggregateLoss.val,
                         top1=self.trainMeter.aggregateAccuracyTop1.val,
                         time=batchTime,
-                        dtime=dataLoadingTime))
+                        dtime=dataLoadingTime,
+                        quantized=self.experimentStatus.flagFusedQuantized,
+                        pruned=self.experimentStatus.flagPruned,
+                        sparsity=self.experimentStatus.targetSparsity))
 
                     # Log the accuracy, and various losses, and timing for the last ten iter
-                    self.trainMeter.log((epoch*len(self.trainDataLoader) + batchIdx) *float(hvd.size()) / 16.0)
-                    self.trainTimeMeter.log((epoch*len(self.trainDataLoader) + batchIdx) *float(hvd.size()) / 16.0)
+                    epochTrained = \
+                        self.experimentStatus.numPhaseTrained * self.config.numEpochToTrain \
+                        + epoch
+
+                    self.trainMeter.log((epochTrained*len(self.trainDataLoader) + batchIdx))
+                    self.trainTimeMeter.log((epochTrained*len(self.trainDataLoader) + batchIdx))
 
                 # Reset the train meter stats
                 self.trainMeter.reset()
@@ -565,36 +597,75 @@ class experimentBase(object):
         """
         if self.multiprocessing is False or (self.multiprocessing is True and hvd.rank() == 0):
             print ("Start training")
-        self.prepare_model()
-        optimizer = self.initialize_optimizer()
-        if self.optimizerStateDict:
-            if (self.multiprocessing is True and hvd.rank() == 0) or self.multiprocessing is False:
-                    optimizer.load_state_dict(self.optimizerStateDict)
 
-        if self.multiprocessing is True:
-            hvd.broadcast_optimizer_state(optimizer, root_rank=0)
+        # Quantize the model if necessary
+        if (self.config.quantize is True) and \
+            (self.experimentStatus.flagFusedQuantized is False):
+            self.quantize_model()
+            self.experimentStatus.flagFusedQuantized = True
 
-        resumeFromEpoch = self.experimentStatus.numEpochTrained
-        for epoch in range(resumeFromEpoch, self.config.numEpochToTrain):
-            if self.experimentStatus.flagFusedQuantized is True:
-                if epoch >= self.config.numUpdateQatObserverEpochs:
-                    self.model.apply(torch.quantization.disable_observer)
-                else:
-                    self.model.apply(torch.quantization.enable_observer)
+        # Assertion: We cannot perform multi-phase training for quantization
+        assert (self.experimentStatus.flagFusedQuantized is False) \
+            or (self.config.numPhaseToTrain == 1), \
+            'For QAT training, the number of training phase can only be 1'
 
-                if epoch >= self.config.numUpdateBNStatsEpochs:
-                    self.model.apply(torch.nn.intrinsic.qat.freeze_bn_stats)
-                else:
-                    self.model.apply(torch.nn.intrinsic.qat.update_bn_stats)
+        # Assertion: We cannot modify the prune mask and perform QAT at the same time
+        assert ((self.config.prune is True) and (self.config.quantize is True)) is False, \
+            'Cannot update the prune mask and perform quantization-aware training simultaneously.'
+        startEpoch = self.experimentStatus.numEpochTrained
+        startPhase = self.experimentStatus.numPhaseTrained
+        for phase in range(startPhase, self.config.numPhaseToTrain):
+            # If sparsity needs to be updated
+            if self.config.prune == True:
+                if self.experimentStatus.flagPruned == True:
+                    # If already pruned, then make existing mask permanent
+                    custom_prune.unPruneNetwork(self.model)
+                    # end-if
+                targetSparsity = self.config.sparsityIncrement * (phase + 1)
+                self.prune_network(sparsityTarget=targetSparsity)
+                self.experimentStatus.flagPruned = True
+                self.experimentStatus.targetSparsity = targetSparsity
 
-            self.train_one_epoch(optimizer, epoch)
-            self.validate(epoch)
-            # TODO: save the checkpoint
-            # TODO: Maybe should save this before validate?
-            self.save_experiment_to_checkpoint(optimizer, self.config.checkpointSaveDir)
+            # reinitialize optimizer for each phase
+            optimizer = self.initialize_optimizer()
 
-            #Update statistics
-            self.experimentStatus.numEpochTrained += 1
+            if phase == startPhase:
+                if self.optimizerStateDict:
+                    if (self.multiprocessing is True and hvd.rank() == 0) or self.multiprocessing is False:
+                        optimizer.load_state_dict(self.optimizerStateDict)
+
+            if self.multiprocessing is True:
+                hvd.broadcast_optimizer_state(optimizer, root_rank=0)
+
+            for epoch in range(startEpoch, self.config.numEpochToTrain):
+                # Enable/disable quantization parameter and BN stats update
+                if self.experimentStatus.flagFusedQuantized is True:
+                    if epoch >= self.config.numUpdateQatObserverEpochs:
+                        self.model.apply(torch.quantization.disable_observer)
+                    else:
+                        self.model.apply(torch.quantization.enable_observer)
+
+                    if epoch >= self.config.numUpdateBNStatsEpochs:
+                        self.model.apply(torch.nn.intrinsic.qat.freeze_bn_stats)
+                    else:
+                        self.model.apply(torch.nn.intrinsic.qat.update_bn_stats)
+
+                self.train_one_epoch(optimizer, epoch)
+                self.validate(epoch)
+
+                # Update epoch and phase counters
+                recordEpoch = epoch + 1
+                recordPhase = phase
+                if recordEpoch == self.config.numEpochToTrain:
+                    recordEpoch = 0
+                    recordPhase = phase + 1
+                self.experimentStatus.numEpochTrained = recordEpoch
+                self.experimentStatus.numPhaseTrained = recordPhase
+                self.save_experiment_to_checkpoint(optimizer, self.config.checkpointSaveDir)
+                # end-for over epoch
+            # Reset the epoch count for the next phase
+            startEpoch = 0
+            #end-for over phase
 
     def validate(self, epoch: int):
         """
@@ -663,7 +734,7 @@ class experimentBase(object):
         def generate_sparsity_list(tensorList : list):
             sparsityList = []
             for idx, tensor in enumerate(tensorList):
-                mask = compute_mask(tensor, self.config.pruneCluster, self.config.pruneThreshold)
+                mask = compute_group_lasso_mask(tensor, self.config.pruneCluster, self.config.pruneThreshold)
 
                 mask = mask.byte()
                 reference = torch.ones_like(mask)
@@ -684,6 +755,9 @@ class experimentBase(object):
             self.quantize_model()
             self.experimentStatus.flagFusedQuantized = True
 
+        if self.experimentStatus.flagPruned is True:
+            custom_prune.unPruneNetwork(self.model)
+
         evaluatedModel = self.model
 
         # Apply pruning mask, and activation interception, extract weight
@@ -698,7 +772,7 @@ class experimentBase(object):
         iterBatch = 0
         with torch.no_grad():
             for batchIdx, (data, target) in enumerate(self.valDataLoader):
-                print("Runing batch {}".format(iterBatch))
+                # print("Runing batch {}".format(iterBatch))
                 activationList.clear()
                 output = evaluatedModel(data)
                 batchActivationSparsityList = np.array(generate_sparsity_list(activationList))

@@ -1,19 +1,19 @@
 # YAML file parsers treats scientific notaiton as strings
 
 # Iterations, etc
-numEpochToTrain: 2
-numPhaseToTrain: 7
+numEpochToTrain: 10
+numPhaseToTrain: 1
 batchSizePerWorker: 64
 numThreadsPerWorker: 28
 
 # Learning rates
-lrInitialBase: 0.001
+lrInitialBase: 0.01
 lrPeakBase: 0.04
 lrWarmupEpochs: 1
-lrStepSize: 10
-lrReductionFactor: 0.9
+lrStepSize: 1
+lrReductionFactor: 1.0
 lrMomentum: 0.5
-lrMPAdjustmentWarmUpEpochs: 5
+lrMPAdjustmentWarmUpEpochs: 1
 
 # Loss contribution
 enableLossActivation: False
@@ -24,14 +24,14 @@ lossWeightL1Lambda: 0.00002
 lossWeightL2Lambda: 0.00002
 
 # Pruning and quantization parameters
-prune: True
+prune: False
 pruneCluster: 2
 pruneRangeInCluster: 8
 sparsityIncrement: 0.125
 pruneThreshold: 0.005
-quantize: False
-numUpdateBNStatsEpochs: 100
-numUpdateQatObserverEpochs: 100
+quantize: True
+numUpdateBNStatsEpochs: 5
+numUpdateQatObserverEpochs: 6
 
 # See
 seed: 47
@@ -41,8 +41,8 @@ dataTrainDir: '/homes/jmusel/jmuse/datasets'
 dataValDir: '/homes/jmusel/jmuse/datasets'
 
 # Checkpoints
-checkpointSaveDir: 'experiment_logs/lenet_test_log'
-checkpointSaveFileNameFormat: 'ckpt_LeNet_test_epoch{}.pth.tar'
+checkpointSaveDir: 'experiment_logs/lenet_test_quantize_log'
+checkpointSaveFileNameFormat: 'ckpt_LeNet_test_quantize_epoch{}.pth.tar'
 
 # Log Dir
-logDir: 'experiment_logs/lenet_test_log'
+logDir: 'experiment_logs/lenet_test_quantize_log'
