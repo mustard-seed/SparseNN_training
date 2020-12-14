@@ -74,8 +74,8 @@ time mpirun -x LD_LIBRARY_PATH \
     --map-by ppr:1:socket:pe=$num_core_per_socket --report-bindings \
     --oversubscribe -n $num_proc \
     python ImagenetResNet50Experiment.py --mode train --config_file experiment_configs/config_imagenet_resnet50_baseline2_BPc2r4.yaml \
-    --load_checkpoint 2  \
-    --checkpoint_path experiment_logs/imagenet_resnet50_baseline2_log/ckpt_baseline_epoch39.pth.tar \
+    --load_checkpoint 1  \
+    --checkpoint_path experiment_logs/imagenet_resnet50_baseline2_BPc2r4_log/ckpt_epoch20.pth.tar \
     --multiprocessing  | tee output.txt
 #time mpirun -x LD_LIBRARY_PATH \
 #      -x OMP_NUM_THREADS \

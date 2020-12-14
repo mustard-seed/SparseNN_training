@@ -617,6 +617,9 @@ class experimentBase(object):
             'Cannot update the prune mask and perform quantization-aware training simultaneously.'
         startEpoch = self.experimentStatus.numEpochTrained
         startPhase = self.experimentStatus.numPhaseTrained
+
+        optimizer = self.initialize_optimizer()
+        initialOptimizerState = optimizer.state_dict()
         for phase in range(startPhase, self.config.numPhaseToTrain):
             # If sparsity needs to be updated
             if self.config.prune == True:
@@ -630,9 +633,11 @@ class experimentBase(object):
                 self.experimentStatus.targetSparsity = targetSparsity
 
             # reinitialize optimizer for each phase
-            optimizer = self.initialize_optimizer()
+            optimizer.load_state_dict(initialOptimizerState)
 
-            if phase == startPhase:
+            # If loading from checkpoint, then reinitialze the optimizer
+            # from the checkpoint
+            if startEpoch != 0:
                 if self.optimizerStateDict:
                     if (self.multiprocessing is True and hvd.rank() == 0) or self.multiprocessing is False:
                         optimizer.load_state_dict(self.optimizerStateDict)
