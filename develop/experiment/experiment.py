@@ -836,6 +836,7 @@ class experimentBase(object):
             self.experimentStatus.flagFusedQuantized = True
 
         if self.experimentStatus.flagPruned is False:
+            #TODO: update the prune_network arugment to use the target sparsity
             self.prune_network()
             self.experimentStatus.flagPruned = True
 

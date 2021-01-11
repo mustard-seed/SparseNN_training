@@ -13,6 +13,8 @@ from torch.nn.utils import fuse_conv_bn_weights
 
 import custom_modules.custom_modules as cm
 import quantization.quantization as qt
+# Custom pruning utility, used to extract cluster size, sparsity, prune range
+import pruning.pruning as cm_prune
 
 from typing import List, Union, Tuple
 from easydict import EasyDict as edict
@@ -74,6 +76,8 @@ class LayerInfo(edict):
         self.inputWidths: List[int] = []
         self.inputMemoryLocations: List[int] = []
 
+        self.inputGroupsSeenBySource: List[int] = [1, 1]
+
         self.layerID = layerID
 
 class QuantStubInfo(LayerInfo):
@@ -101,6 +105,7 @@ class DeQuantStubInfo(LayerInfo):
     def __init__(self,
                  inputFracBits: int,
                  inputChannels: int,
+                 inputGroupsSeenBySource: int,
                  inputHeight: int,
                  inputWidth: int,
                  layerID: int
@@ -119,6 +124,7 @@ class DeQuantStubInfo(LayerInfo):
         self.inputChannels.append(inputChannels)
         self.inputHeights.append(inputHeight)
         self.inputWidths.append(inputWidth)
+        self.inputGroupsSeenBySource[0] = inputGroupsSeenBySource
 
 class ConvInfo(LayerInfo):
     """
@@ -135,11 +141,17 @@ class ConvInfo(LayerInfo):
                  inputBorderPadding : int,
                  inputTransConvPadding : int,
                  inputChannels : int,
+                 inputGroupsSeenBySource: int,
 
                  weightFracBits : int,
                  kernelSize : int,
                  kernelStride : int,
                  hasBias: bool,
+
+                 #SpW arguments:
+                 sparsity: float,
+                 pruneClusterSize,
+                 pruneRangeInCluster,
 
                  channelGroups : int,
 
@@ -170,6 +182,7 @@ class ConvInfo(LayerInfo):
         self.inputWidths.append(inputWidth)
         self.inputBorderPadding = inputBorderPadding
         self.inputTransConvPadding = inputTransConvPadding
+        self.inputGroupsSeenBySource[0] = inputGroupsSeenBySource
 
         self.weightFracBits = weightFracBits
         self.kernelSize = kernelSize
@@ -177,6 +190,10 @@ class ConvInfo(LayerInfo):
         self.weightParameterFileStartPosition: Union[int, None] = None
         self.biasParameterFileStartPosition: Union[int, None] = None
         self.hasBias = hasBias
+
+        self.pruneClusterSize = pruneClusterSize
+        self.sparsity = sparsity
+        self.pruneRangeInCluster = pruneRangeInCluster
 
         assert (inputChannels % channelGroups == 0) and (outputChannels % channelGroups == 0), \
             'channelGroups does not divide into inputChannels or outputChannels'
@@ -192,6 +209,7 @@ class MaxPoolInfo(LayerInfo):
                  inputWidth: int,
                  inputBorderPadding: int,
                  inputChannels: int,
+                 inputGroupsSeenBySource: int,
 
                  kernelSize: int,
                  kernelStride: int,
@@ -224,6 +242,7 @@ class MaxPoolInfo(LayerInfo):
         self.inputHeights.append(inputHeight)
         self.inputWidths.append(inputWidth)
         self.inputBorderPadding = inputBorderPadding
+        self.inputGroupsSeenBySource[0] = inputGroupsSeenBySource
 
         self.kernelSize = kernelSize
         self.kernelStride = kernelStride
@@ -238,6 +257,7 @@ class AvgPoolInfo(LayerInfo):
                  inputWidth: int,
                  inputBorderPadding: int,
                  inputChannels: int,
+                 inputGroupsSeenBySource: int,
 
                  kernelSize: int,
                  kernelStride: int,
@@ -272,6 +292,7 @@ class AvgPoolInfo(LayerInfo):
         self.inputHeights.append(inputHeight)
         self.inputWidths.append(inputWidth)
         self.inputBorderPadding = inputBorderPadding
+        self.inputGroupsSeenBySource[0] = inputGroupsSeenBySource
 
         self.kernelSize = kernelSize
         self.kernelStride = kernelStride
@@ -286,6 +307,8 @@ class EltAddInfo(LayerInfo):
                  inputHeight: int,
                  inputWidth: int,
                  inputChannels: int,
+                 inputLeftGroupsSeenBySource: int,
+                 inputRightGroupsSeenBySource: int,
 
                  inputLeftFracBits: int,
                  inputRightFracBits: int,
@@ -307,6 +330,10 @@ class EltAddInfo(LayerInfo):
         else:
             self.inputFracBits[0] = inputLeftFracBits
             self.inputFracBits[1] = inputRightFracBits
+
+        self.inputGroupsSeenBySource[0] = inputLeftGroupsSeenBySource
+        self.inputGroupsSeenBySource[1] = inputRightGroupsSeenBySource
+
         for i in range(2):
             self.inputChannels.append(inputChannels)
             self.inputHeights.append(inputHeight)
@@ -545,6 +572,7 @@ class TraceDNN:
         inputIDs = []
         inputPrecisions = []
         inputChannels = []
+        inputGroupsSeenbySource = []
         inputHeights = []
         inputWidths = []
         input0FracBits = None
@@ -559,6 +587,7 @@ class TraceDNN:
                 # print('Input precision: {}'.format(inputPrecision))
                 inputPrecisions.append(inputPrecision)
                 inputChannels.append(self.layerList[idx].outputChannels)
+                inputGroupsSeenbySource.append(self.layerList[idx].outputCurrentNumGroups)
                 inputHeights.append(self.layerList[idx].outputHeight)
                 inputWidths.append(self.layerList[idx].outputWidth)
             elif isinstance(input, tuple):
@@ -572,6 +601,7 @@ class TraceDNN:
                     # print('Input precision: {}'.format(inputPrecision))
                     inputPrecisions.append(tensor.view(nElements)[self.PRECISION_IDX])
                     inputChannels.append(self.layerList[idx].outputChannels)
+                    inputGroupsSeenbySource.append(self.layerList[idx].outputCurrentNumGroups)
                     inputHeights.append(self.layerList[idx].outputHeight)
                     inputWidths.append(self.layerList[idx].outputWidth)
             else:
@@ -655,6 +685,21 @@ class TraceDNN:
             weightPrecisionScale = weight_post_process.scale.view(1)
             weightFracBits = int(torch.round(torch.log2(1.0 / weightPrecisionScale)).view(1)[0].item())
             hasBias = False if bias is None else True
+
+            # Determine the SpW parameters
+            flagFoundSpWInfo = False
+            pruneRangeInCluster = None
+            pruneCluster = None
+            sparsity = None
+            for _, hook in module._forward_pre_hooks.items():
+                if isinstance(hook, cm_prune.balancedPruningMethod):
+                    flagFoundSpWInfo = True
+                    pruneRangeInCluster = hook.pruneRangeInCluster
+                    sparsity = hook.sparsity
+                    pruneCluster = hook.clusterSize
+            assert(flagFoundSpWInfo), "Cannot find balanced sparsity pruning hook" \
+                                      "in convolution module {}".format(module)
+
             newLayer = ConvInfo(
                 outputFracBits=int(outputFracBits),
                 outputChannels=outputChannels,
@@ -666,11 +711,16 @@ class TraceDNN:
                 inputBorderPadding=padding,
                 inputTransConvPadding=0,
                 inputChannels=inputChannels[0],
+                inputGroupsSeenBySource=inputGroupsSeenbySource[0],
 
                 weightFracBits=int(weightFracBits),
                 kernelSize=kernelSize,
                 kernelStride=kernelStride,
                 hasBias=hasBias,
+
+                pruneRangeInCluster=pruneRangeInCluster,
+                pruneClusterSize=pruneCluster,
+                sparsity=sparsity,
 
                 channelGroups=groups,
                 layerID=self.layerID
@@ -708,6 +758,7 @@ class TraceDNN:
                 inputWidth=inputWidths[0],
                 inputBorderPadding=padding,
                 inputChannels=inputChannels[0],
+                inputGroupsSeenBySource=inputGroupsSeenbySource[0],
 
                 kernelSize=module.kernel_size,
                 kernelStride=module.stride,
@@ -731,6 +782,7 @@ class TraceDNN:
                 inputWidth=inputWidths[0],
                 inputBorderPadding=padding,
                 inputChannels=inputChannels[0],
+                inputGroupsSeenBySource=inputGroupsSeenbySource[0],
 
                 kernelSize=module.kernel_size,
                 kernelStride=module.stride,
@@ -752,6 +804,8 @@ class TraceDNN:
 
                 inputLeftFracBits=int(input0FracBits),
                 inputRightFracBits=int(input1FracBits),
+                inputLeftGroupsSeenBySource=int(inputGroupsSeenbySource[0]),
+                inputRightGroupsSeenBySource=int(inputGroupsSeenbySource[1]),
 
                 layerID=self.layerID
             )
@@ -767,6 +821,7 @@ class TraceDNN:
             newLayer = DeQuantStubInfo(
                 inputFracBits=int(input0FracBits),
                 inputChannels=input[0].size()[1],
+                inputGroupsSeenBySource=inputGroupsSeenbySource[0],
                 inputHeight=input[0].size()[2] if len(input[0].size()) > 2 else 1,
                 inputWidth=input[0].size()[3] if len(input[0].size()) > 2 else 1,
                 layerID=self.layerID

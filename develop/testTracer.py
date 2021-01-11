@@ -15,6 +15,9 @@ import torch.nn.init as init
 from torch.quantization import QuantStub, DeQuantStub
 from typing import Union, List
 
+from torch.nn.intrinsic import qat as nniqat
+import torch.nn.qat as nnqat
+
 import os
 import yaml
 import argparse
@@ -362,8 +365,9 @@ class TracerTest():
         else:
             print(self.mode)
             raise ValueError('Unsupported mode')
-        self.pruneClusterSize=1
-        self.pruneThreshold=1e-4
+        self.pruneClusterSize = 2
+        self.pruneRangeInCluster = 4
+        self.targetSparsity = 0.5
         qatRoundedConfig = torch.quantization.FakeQuantize.with_args(
             observer=custom_quant.RoundedMovingAverageMinMaxObserver,
             quant_min=-128,
@@ -380,49 +384,88 @@ class TracerTest():
         self.model.qconfig = self.qatConfig
         torch.quantization.prepare_qat(self.model, inplace=True)
 
-        # Prune the model
-        if self.mode == 'resnet':
-            custom_pruning.applyClusterPruning(
-                self.model.inputConvBNReLU[0],
-                'weight',
-                clusterSize=self.pruneClusterSize,
-                threshold=self.pruneThreshold
-            )
-        if self.mode == 'resnet' or self.mode == 'tiny':
-            for m in self.model.modules():
-                if isinstance(m, resnet.BasicBlock):
-                    custom_pruning.applyClusterPruning(m.convBN1[0],
-                                                       "weight",
-                                                       clusterSize=self.pruneClusterSize,
-                                                       threshold=self.pruneThreshold)
-                    custom_pruning.applyClusterPruning(m.convBN2[0],
-                                                       "weight",
-                                                       clusterSize=self.pruneClusterSize,
-                                                       threshold=self.pruneThreshold)
-                    if isinstance(m.shortcut, cm.ConvBN):
-                        custom_pruning.applyClusterPruning(m.shortcut[0],
-                                                           "weight",
-                                                           clusterSize=self.pruneClusterSize,
-                                                           threshold=self.pruneThreshold)
-        elif self.mode == 'conv':
-            custom_pruning.applyClusterPruning(self.model.block[0],
-                                               "weight",
-                                               clusterSize=self.pruneClusterSize,
-                                               threshold=self.pruneThreshold)
-        elif self.mode == 'seq':
-            custom_pruning.applyClusterPruning(self.model.convBN1[0],
-                                               "weight",
-                                               clusterSize=self.pruneClusterSize,
-                                               threshold=self.pruneThreshold)
-            custom_pruning.applyClusterPruning(self.model.convBN2[0],
-                                               "weight",
-                                               clusterSize=self.pruneClusterSize,
-                                               threshold=self.pruneThreshold)
-        elif self.mode == 'avglinear':
-            custom_pruning.applyClusterPruning(self.model.fc[0],
-                                               "weight",
-                                               clusterSize=self.pruneClusterSize,
-                                               threshold=self.pruneThreshold)
+        # # Prune the model
+        # if self.mode == 'resnet' or self.mode == 'tiny' or self.mode == 'test'
+        #     for m in self.model.modules():
+        #         if isinstance(m, resnet.BasicBlock):
+        #             custom_pruning.applyBalancedPruning(m.convBN1[0],
+        #                                                "weight",
+        #                                                clusterSize=self.pruneClusterSize,
+        #                                                 pruneRangeInCluster=self.pruneRangeInCluster,
+        #                                                 sparsity=self.targetSparsity
+        #                                                 )
+        #             custom_pruning.applyBalancedPruning(m.convBN2[0],
+        #                                                "weight",
+        #                                                clusterSize=self.pruneClusterSize,
+        #                                                pruneRangeInCluster=self.pruneRangeInCluster,
+        #                                                 sparsity=self.targetSparsity
+        #                                                 )
+        #             if isinstance(m.shortcut, cm.ConvBN):
+        #                 custom_pruning.applyBalancedPruning(m.shortcut[0],
+        #                                                    "weight",
+        #                                                    clusterSize=self.pruneClusterSize,
+        #                                                     pruneRangeInCluster=self.pruneRangeInCluster,
+        #                                                     sparsity=self.targetSparsity
+        #                                                     )
+        # if self.mode == 'resnet' or self.mode == 'tiny' or self.mode == 'test'
+        #     for m in self.model.modules():
+        #         if isinstance(m, resnet.BasicBlock):
+        #             custom_pruning.applyBalancedPruning(m.convBN1[0],
+        #                                                "weight",
+        #                                                clusterSize=self.pruneClusterSize,
+        #                                                 pruneRangeInCluster=self.pruneRangeInCluster,
+        #                                                 sparsity=self.targetSparsity
+        #                                                 )
+        #             custom_pruning.applyBalancedPruning(m.convBN2[0],
+        #                                                "weight",
+        #                                                clusterSize=self.pruneClusterSize,
+        #                                                pruneRangeInCluster=self.pruneRangeInCluster,
+        #                                                 sparsity=self.targetSparsity
+        #                                                 )
+        #             if isinstance(m.shortcut, cm.ConvBN):
+        #                 custom_pruning.applyBalancedPruning(m.shortcut[0],
+        #                                                    "weight",
+        #                                                    clusterSize=self.pruneClusterSize,
+        #                                                     pruneRangeInCluster=self.pruneRangeInCluster,
+        #                                                     sparsity=self.targetSparsity
+        #                                                     )
+        # elif self.mode == 'conv':
+        #     custom_pruning.applyBalancedPruning(self.model.block[0],
+        #                                        "weight",
+        #                                        clusterSize=self.pruneClusterSize,
+        #                                         pruneRangeInCluster=self.pruneRangeInCluster,
+        #                                         sparsity=self.targetSparsity
+        #                                         )
+        # elif self.mode == 'seq':
+        #     custom_pruning.applyBalancedPruning(self.model.convBN1[0],
+        #                                        "weight",
+        #                                        clusterSize=self.pruneClusterSize,
+        #                                         pruneRangeInCluster=self.pruneRangeInCluster,
+        #                                         sparsity=self.targetSparsity
+        #                                         )
+        #     custom_pruning.applyBalancedPruning(self.model.convBN2[0],
+        #                                        "weight",
+        #                                         clusterSize=self.pruneClusterSize,
+        #                                         pruneRangeInCluster=self.pruneRangeInCluster,
+        #                                         sparsity=self.targetSparsity
+        #                                         )
+        # elif self.mode == 'avglinear':
+        #     custom_pruning.applyBalancedPruning(self.model.fc[0],
+        #                                        "weight",
+        #                                         clusterSize=self.pruneClusterSize,
+        #                                         pruneRangeInCluster=self.pruneRangeInCluster,
+        #                                         sparsity=self.targetSparsity
+        #                                         )
+
+        for module in self.model.modules():
+            if isinstance(module, (nnqat.Linear, nnqat.Conv2d, nniqat.ConvBn2d, nniqat.ConvBnReLU2d, nniqat.ConvReLU2d, nniqat.LinearReLU)):
+                custom_pruning.applyBalancedPruning(module,
+                                                    "weight",
+                                                    clusterSize=self.pruneClusterSize,
+                                                    pruneRangeInCluster=self.pruneRangeInCluster,
+                                                    sparsity=self.targetSparsity
+                                                    )
+
 
     def trace(self, dirname: str, fileBaseName: str):
         if self.mode == 'test':
