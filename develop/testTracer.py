@@ -185,6 +185,39 @@ class Conv(nn.Module):
             elif type(m) == cm.ConvBN:
                 torch.quantization.fuse_modules(m, ['0', '1'], inplace=True)
 
+class PointConv(nn.Module):
+    """
+    Tiny-Net just for generating a trace purpose
+    """
+    def __init__(self):
+        super().__init__()
+        self.block = resnet.conv1x1BN(in_planes=4, out_planes=8, stride=1, groups=1, dilation=1, require_relu=True)
+        self.quant = QuantStub()
+        self.dequant = DeQuantStub()
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight, mode="fan_out")
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+
+    def forward(self, x):
+        x = self.quant(x)
+        x = self.block(x)
+        output = self.dequant(x)
+
+        return output
+
+        # Fuse layers prior to quantization
+
+    def fuse_model(self):
+        for m in self.modules():
+            if type(m) == cm.ConvBNReLU:
+                # Fuse the layers in ConvBNReLU module, which is derived from nn.Sequential
+                # Use the default fuser function
+                torch.quantization.fuse_modules(m, ['0', '1', '2'], inplace=True)
+            elif type(m) == cm.ConvBN:
+                torch.quantization.fuse_modules(m, ['0', '1'], inplace=True)
+
 class ResNet50_conv12(nn.Module):
     """
     Tiny-Net just for generating a trace purpose
@@ -346,6 +379,8 @@ class TracerTest():
             self.model = TinyNet()
         elif self.mode == 'conv':
             self.model = Conv()
+        elif self.mode == 'pointconv':
+            self.model = PointConv()
         elif self.mode == 'maxpool':
             self.model = MaxPool()
         elif self.mode == 'add':
@@ -481,6 +516,8 @@ class TracerTest():
             dummyInput = torch.rand(size=[1, 3, 56, 56]) * 4.0 - 2.0
         elif self.mode == 'resnet50_conv12':
             dummyInput = torch.rand(size=[1,256,56, 56]) * 4.0 - 2.0
+        elif self.mode == 'pointconv':
+            dummyInput = torch.rand(size=[1, 4, 4, 4]) * (-1.0) + 4.0
         else:
             dummyInput = torch.rand(size=[1, 4, 8, 8]) * (-1.0) + 4.0
 
@@ -531,7 +568,7 @@ class TracerTest():
 
 if __name__=='__main__':
     parser = argparse.ArgumentParser(description="testTracer")
-    parser.add_argument('--mode', type=str, choices=['test', 'tiny', 'conv', 'maxpool', 'add', 'avg', 'seq', 'avglinear',
+    parser.add_argument('--mode', type=str, choices=['test', 'tiny', 'conv', 'pointconv', 'maxpool', 'add', 'avg', 'seq', 'avglinear',
                                                      'restest_cifar10', 'restest_imagenet', 'resnet50_conv12'], default='conv',
                         help='Mode. Valid choices are test, tiny, conv, maxpool, add, avg, seq, restest_cifar10, restest_imagenet,'
                              'resnet50_conv12, and avglinear')
@@ -544,6 +581,8 @@ if __name__=='__main__':
         fileBaseName = 'tinyTrace'
     elif args.mode == 'conv':
         fileBaseName = 'convTrace'
+    elif args.mode == 'pointconv':
+        fileBaseName = 'pointconvTrace'
     elif args.mode == 'maxpool':
         fileBaseName = 'mp'
     elif args.mode == 'add':
