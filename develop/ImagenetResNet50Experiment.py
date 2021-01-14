@@ -284,7 +284,7 @@ class experimentImagenetResNet50(experimentBase):
             sparsityList = []
             for idx, tensor in enumerate(tensorList):
                 if tensor is not None:
-                    mask = custom_pruning.compute_mask(tensor, self.config.pruneCluster, self.config.pruneThreshold)
+                    mask = custom_pruning.compute_group_lasso_mask(tensor, self.config.pruneCluster, self.config.pruneThreshold)
                     mask = mask.byte()
                     reference = torch.ones_like(mask)
                     comparison = torch.eq(mask, reference)

@@ -342,7 +342,10 @@ class EltAddInfo(LayerInfo):
 class TraceDNN:
     ID_IDX = 0
     PRECISION_IDX = 1
-    def __init__(self, module: nn.Module, _foldBN: bool=True):
+    def __init__(self, module: nn.Module,
+                 _foldBN: bool=True,
+                 _defaultPruneCluster: int=2,
+                 _defaultPruneRangeInCluster: int=4):
         self.module = module
 
         # Run-time arguments
@@ -363,6 +366,8 @@ class TraceDNN:
         self.parameterKeys: List[str] = []
 
         self.foldBN = _foldBN
+        self.defaultPruneCluster = _defaultPruneCluster
+        self.defaultPruneRangeInCluster = _defaultPruneRangeInCluster
 
     def reset(self):
         self.layerID = 0
@@ -697,8 +702,12 @@ class TraceDNN:
                     pruneRangeInCluster = hook.pruneRangeInCluster
                     sparsity = hook.sparsity
                     pruneCluster = hook.clusterSize
-            assert(flagFoundSpWInfo), "Cannot find balanced sparsity pruning hook" \
-                                      "in convolution module {}".format(module)
+
+            if not flagFoundSpWInfo:
+                print ("Using default sparsity pruning parameters for module {}".format(module))
+                pruneRangeInCluster = self.defaultPruneRangeInCluster
+                sparsity = 0.0
+                pruneCluster = self.defaultPruneCluster
 
             newLayer = ConvInfo(
                 outputFracBits=int(outputFracBits),
