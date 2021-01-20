@@ -155,7 +155,8 @@ class ConvInfo(LayerInfo):
 
                  channelGroups : int,
 
-                 layerID: int
+                 layerID: int,
+                 isAfterInput: bool
                  ):
         super().__init__(operationType='conv',
                          outputFracBits=outputFracBits,
@@ -198,6 +199,7 @@ class ConvInfo(LayerInfo):
         assert (inputChannels % channelGroups == 0) and (outputChannels % channelGroups == 0), \
             'channelGroups does not divide into inputChannels or outputChannels'
         self.outputCurrentNumGroups = channelGroups
+        self.isAfterInput = isAfterInput
 
 class MaxPoolInfo(LayerInfo):
     def __init__(self,
@@ -582,6 +584,7 @@ class TraceDNN:
         inputWidths = []
         input0FracBits = None
         outputPrecisionScale = None
+        isAfterInput = False
         if isinstance(module, QuantStub) is False:
             if isinstance(input, T):
                 nElements = input.numel()
@@ -595,6 +598,8 @@ class TraceDNN:
                 inputGroupsSeenbySource.append(self.layerList[idx].outputCurrentNumGroups)
                 inputHeights.append(self.layerList[idx].outputHeight)
                 inputWidths.append(self.layerList[idx].outputWidth)
+                if (self.layerList[idx].operationType == 'quantstub'):
+                    isAfterInput = True
             elif isinstance(input, tuple):
                 for tensor in input:
                     nElements = tensor.numel()
@@ -609,6 +614,9 @@ class TraceDNN:
                     inputGroupsSeenbySource.append(self.layerList[idx].outputCurrentNumGroups)
                     inputHeights.append(self.layerList[idx].outputHeight)
                     inputWidths.append(self.layerList[idx].outputWidth)
+
+                    if (self.layerList[idx].operationType == 'quantstub'):
+                        isAfterInput = True
             else:
                 raise TypeError('The input argument is neither a tensor nor a tuple of tensors')
 
@@ -709,6 +717,11 @@ class TraceDNN:
                 sparsity = 0.0
                 pruneCluster = self.defaultPruneCluster
 
+            # isAfterInput = False
+            # nElements = input.numel()
+            # preIdx = int(input.view(nElements)[self.ID_IDX].item())
+            # if (self.layerList[preIdx].operationType == 'quantstub'):
+            #     isAfterInput = True
             newLayer = ConvInfo(
                 outputFracBits=int(outputFracBits),
                 outputChannels=outputChannels,
@@ -732,7 +745,8 @@ class TraceDNN:
                 sparsity=sparsity,
 
                 channelGroups=groups,
-                layerID=self.layerID
+                layerID=self.layerID,
+                isAfterInput=isAfterInput
             )
 
             # Extract parameters
