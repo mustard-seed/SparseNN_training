@@ -422,6 +422,10 @@ class experimentBase(object):
 
         self.restore_model_from_state_dict(state_dict['model'])
 
+    def initialize_from_pre_trained_model(self):
+        # Overriden by concrete classes
+        pass
+
     def save_experiment_to_checkpoint(self, optimizer, filePath):
         """
         Saves experiment stats, optimizer, and model from checkpoint

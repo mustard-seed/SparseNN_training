@@ -3,7 +3,7 @@ import torch.nn.functional as F
 import torch.nn as nn
 from torch.quantization import QuantStub, DeQuantStub
 import torch.optim as optim
-from torchvision import datasets, transforms
+from torchvision import models, datasets, transforms
 import torch.utils.data.distributed as distributed
 import torch.multiprocessing as mp
 from torch.utils.data import DataLoader
@@ -119,6 +119,60 @@ class experimentImagenetResNet50(experimentBase):
         )
 
         # End of __init__
+
+    def initialize_from_pre_trained_model_helper(self) -> None:
+        '''
+        Download the pre-trained ResNet-50 model from Torch Vision,
+        and use the pre-trained parameters to initialize our custom ResNet-50 model
+        :return: None
+        '''
+        print('Downloading the pretrained ResNet-50 from TorchVision')
+        pretrainedModel = models.resnet50(pretrained=True, progress=True)
+
+        '''
+        Strategy:
+        - Match each residual block in the pre-trained model to each residual block in our custom model
+        - Match the first Conv + BN in the pre-trained model to the first Conv + BN in the custom model
+        - Match the last FC layer
+        - For the definition of Torch Vision's ResNet-50, 
+          See https://pytorch.org/vision/stable/_modules/torchvision/models/resnet.html#resnet50
+        '''
+        # Match the input convolution layer
+        self.model.inputConvBNReLU[0].load_state_dict(pretrainedModel.conv1.state_dict())
+        self.model.inputConvBNReLU[1].load_state_dict(pretrainedModel.bn1.state_dict())
+
+        # Match the residual blocks
+        destStages = [self.model.stage1,
+                          self.model.stage2,
+                          self.model.stage3,
+                          self.model.stage4]
+        sourceStages = [pretrainedModel.layer1,
+                        pretrainedModel.layer2,
+                        pretrainedModel.layer3,
+                        pretrainedModel.layer4]
+        # Iterate through the stages
+        for idx, destStage in enumerate(destStages):
+            # Iterate through the blocks
+            idxBlock = 0
+            for block in destStage.children():
+                # Load the parameter of each layer
+                block.convBN1[0].load_state_dict(sourceStages[idx][idxBlock].conv1.state_dict())
+                block.convBN1[1].load_state_dict(sourceStages[idx][idxBlock].bn1.state_dict())
+                block.convBN2[0].load_state_dict(sourceStages[idx][idxBlock].conv2.state_dict())
+                block.convBN2[1].load_state_dict(sourceStages[idx][idxBlock].bn2.state_dict())
+                block.convBN3[0].load_state_dict(sourceStages[idx][idxBlock].conv3.state_dict())
+                block.convBN3[1].load_state_dict(sourceStages[idx][idxBlock].bn3.state_dict())
+                idxBlock = idxBlock + 1
+
+        self.model.fc.load_state_dict(pretrainedModel.fc.state_dict())
+
+    def initialize_from_pre_trained_model(self) -> None:
+        if self.multiprocessing is True:
+            if hvd.rank() == 0:
+                self.initialize_from_pre_trained_model_helper()
+            hvd.broadcast_parameters(self.model.parameters(), root_rank=0)
+        else:
+            self.initialize_from_pre_trained_model_helper()
 
     def evaluate_loss(self, output: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         return F.cross_entropy(input=output, target=target)
@@ -390,8 +444,12 @@ if __name__ == '__main__':
                         help='Mode. Valid choices are train, evaluate_sparsity, and print model')
     parser.add_argument('--config_file', type=str, required=True,
                         help='Path to the experiment configuration file. Required')
-    parser.add_argument('--load_checkpoint', type=int, choices=[0, 1, 2], default=0,
-                        help='Load experiment from checkpoint. Default: 0. 0: start from scratch; 1: load full experiment; 2: load model only')
+    parser.add_argument('--load_checkpoint', type=int, choices=[0, 1, 2, 3], default=0,
+                        help='Load experiment from checkpoint. '
+                             'Default: 0. 0: start from scratch; '
+                             '1: load full experiment; '
+                             '2: load model only'
+                             '3: initialize model from pre-trained ResNet-50 from Torch Vision')
     parser.add_argument('--multiprocessing', action='store_true',
                         help='Enable multiprocessing (using Horovod as backend). Default: False')
     parser.add_argument('--checkpoint_path', type=str,
@@ -410,6 +468,8 @@ if __name__ == '__main__':
         loadModelOnly = True if args.load_checkpoint == 2 else False
         experiment.restore_experiment_from_checkpoint(checkpoint=args.checkpoint_path,
                                                       loadModelOnly=loadModelOnly)
+    elif args.load_checkpoint == 3:
+        experiment.initialize_from_pre_trained_model()
 
     if args.mode == 'train':
         experiment.train()
