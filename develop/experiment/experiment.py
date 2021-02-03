@@ -697,7 +697,7 @@ class experimentBase(object):
             # End of one validation epoch
 
             # Log the validation epoch
-            self.valMeter.log(epoch)
+            self.valMeter.log(epoch + self.experimentStatus.numPhaseTrained * self.config.numEpochToTrain)
 
         remove_hook_activation(forwardHookHandlesDict=fowardHookHandles)
 
