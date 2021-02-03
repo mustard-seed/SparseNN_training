@@ -61,22 +61,23 @@ echo "Nodefile List       " $PBS_NODEFILE
 ### Execute on multinode. One process per socket, and bind each process to all the cores on the socket
 ### See https://stackoverflow.com/questions/28216897/syntax-of-the-map-by-option-in-openmpi-mpirun-v1-8
 ### mpiexec won't work 
-#time mpirun -x LD_LIBRARY_PATH \
-#    -x OMP_NUM_THREADS \
-#    -x PATH \
-#    --map-by ppr:1:socket:pe=$num_core_per_socket --report-bindings \
-#    --oversubscribe -n $num_proc \
-#    python ImagenetResNet50Experiment.py --mode train --config_file experiment_configs/config_imagenet_resnet50_baseline2.yaml \
-#    --multiprocessing | tee output.txt
 time mpirun -x LD_LIBRARY_PATH \
     -x OMP_NUM_THREADS \
     -x PATH \
     --map-by ppr:1:socket:pe=$num_core_per_socket --report-bindings \
     --oversubscribe -n $num_proc \
-    python ImagenetResNet50Experiment.py --mode train --config_file experiment_configs/config_imagenet_resnet50_baseline2_BPc2r4.yaml \
-    --load_checkpoint 1  \
-    --checkpoint_path experiment_logs/imagenet_resnet50_baseline2_BPc2r4_log/ckpt_epoch20.pth.tar \
-    --multiprocessing  | tee output.txt
+    python ImagenetResNet50Experiment.py --mode train --config_file experiment_configs/config_imagenet_resnet50_pretrained.yaml \
+    --load_checkpoint 3 \
+    --multiprocessing | tee output.txt
+#time mpirun -x LD_LIBRARY_PATH \
+#    -x OMP_NUM_THREADS \
+#    -x PATH \
+#    --map-by ppr:1:socket:pe=$num_core_per_socket --report-bindings \
+#    --oversubscribe -n $num_proc \
+#    python ImagenetResNet50Experiment.py --mode train --config_file experiment_configs/config_imagenet_resnet50_baseline2_BPc2r4_quantize.yaml \
+#    --load_checkpoint 2  \
+#    --checkpoint_path experiment_logs/imagenet_resnet50_baseline2_BPc2r4_log/ckpt_epoch60.pth.tar \
+#    --multiprocessing  | tee output.txt
 #time mpirun -x LD_LIBRARY_PATH \
 #      -x OMP_NUM_THREADS \
 #      -x PATH \

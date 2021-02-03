@@ -166,11 +166,13 @@ class experimentImagenetResNet50(experimentBase):
 
         self.model.fc.load_state_dict(pretrainedModel.fc.state_dict())
 
+        print('Finished loading parameters from the pre-trained ResNet-50 from TorchVision')
+
     def initialize_from_pre_trained_model(self) -> None:
         if self.multiprocessing is True:
             if hvd.rank() == 0:
                 self.initialize_from_pre_trained_model_helper()
-            hvd.broadcast_parameters(self.model.parameters(), root_rank=0)
+            hvd.broadcast_parameters(self.model.state_dict(), root_rank=0)
         else:
             self.initialize_from_pre_trained_model_helper()
 
