@@ -3,7 +3,7 @@
 #See Section 4.2 of Deep Residual Learning for Image Classification for settings
 
 # Iterations, etc
-numEpochToTrain: 10
+numEpochToTrain: 4
 batchSizePerWorker: 32
 numThreadsPerWorker: 28
 numPhaseToTrain: 1
@@ -18,7 +18,7 @@ numPhaseToTrain: 1
 lrInitialBase: 0.001
 lrPeakBase: 0.001
 lrWarmupEpochs: 1
-lrStepSize: 5
+lrStepSize: 2
 lrReductionFactor: 0.1
 lrMomentum: 0.9
 lrMPAdjustmentWarmUpEpochs: 3
