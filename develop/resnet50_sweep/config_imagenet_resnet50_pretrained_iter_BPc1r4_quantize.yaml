@@ -1,0 +1,50 @@
+# YAML file parsers treats scientific notaiton as strings
+#Configuration for pruning ResNet-50 on ImageNet
+#See Section 4.2 of Deep Residual Learning for Image Classification for settings
+
+# Iterations, etc
+numEpochToTrain: 10
+batchSizePerWorker: 32
+numThreadsPerWorker: 28
+numPhaseToTrain: 1
+# Learning rates
+
+lrInitialBase: 0.0001
+lrPeakBase: 0.0001
+lrWarmupEpochs: 1
+lrStepSize: 5
+lrReductionFactor: 0.1
+lrMomentum: 0.9
+lrMPAdjustmentWarmUpEpochs: 1
+
+# Loss contribution
+enableLossActivation: False
+enableLossWeightL1: False
+enableLossWeightL2: True
+lossActivationLambda: 0.00002
+lossWeightL1Lambda: 0.00002
+lossWeightL2Lambda: 0.0001
+
+# Pruning and quantization parameters
+prune: False
+pruneCluster: 1
+pruneRangeInCluster: 4
+sparsityIncrement: 0.25
+pruneThreshold: 0.005
+quantize: True
+numUpdateBNStatsEpochs: 2
+numUpdateQatObserverEpochs: 3
+
+# See
+seed: 47
+
+# Dataset location
+dataTrainDir: '/homes/jmusel/jmuse/imagenet/train'
+dataValDir: '/homes/jmusel/jmuse/imagenet/val'
+
+# Checkpoints
+checkpointSaveDir: 'resnet50_sweep/logs/imagenet_resnet50_pretrained_iter_BPc1r4_quantize_log'
+checkpointSaveFileNameFormat: 'ckpt_epoch{}.pth.tar'
+
+# Log Dir
+logDir: 'resnet50_sweep/logs/imagenet_resnet50_pretrained_iter_BPc1r4_quantize_log'
