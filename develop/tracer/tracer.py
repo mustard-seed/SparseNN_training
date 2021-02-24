@@ -349,6 +349,7 @@ class TraceDNN:
                  _defaultPruneCluster: int=2,
                  _defaultPruneRangeInCluster: int=4):
         self.module = module
+        self.module.apply(torch.quantization.disable_observer)
 
         # Run-time arguments
         # Running-counter of the layer IDs

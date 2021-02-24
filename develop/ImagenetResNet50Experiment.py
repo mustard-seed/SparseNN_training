@@ -468,7 +468,7 @@ class experimentImagenetResNet50(experimentBase):
         module = self.quantize_model_method(module, self.qatConfig)
         module = self.prune_network_method(module, self.experimentStatus.targetSparsity, self.config)
         module.load_state_dict(self.model.state_dict())
-
+        module.eval()
         trace = Tracer(module, _foldBN=foldBN)
         """
         Run inference and save a reference input-output pair
@@ -476,7 +476,6 @@ class experimentImagenetResNet50(experimentBase):
         blobPath = os.path.join(dirname, modelName + '_inout.yaml')
         blobFile = open(blobPath, 'w')
         blobDict: dict = {}
-        self.model.eval()
         output = None
         sampleIn = None
         for (data, target) in self.valDataLoader:

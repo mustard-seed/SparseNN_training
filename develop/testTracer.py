@@ -251,6 +251,90 @@ class ResNet50_conv12(nn.Module):
             elif type(m) == cm.ConvBN:
                 torch.quantization.fuse_modules(m, ['0', '1'], inplace=True)
 
+class resnet50_input(nn.Module):
+    """
+    Tiny-Net just for generating a trace purpose
+    """
+    def __init__(self):
+        super().__init__()
+        self.block = cm.ConvBNReLU(
+            in_planes=3,
+            out_planes=64,
+            stride=2,
+            kernel_size=7
+        )
+        self.quant = QuantStub()
+        self.dequant = DeQuantStub()
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                m.weight = torch.nn.Parameter(torch.rand(size=m.weight.size()))
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+            elif isinstance(m, nn.BatchNorm2d):
+                m.weight = torch.nn.Parameter(torch.rand(size=m.weight.size()))
+                nn.init.zeros_(m.bias)
+
+    def forward(self, x):
+        x = self.quant(x)
+        x = self.block(x)
+        output = self.dequant(x)
+
+        return output
+
+        # Fuse layers prior to quantization
+
+    def fuse_model(self):
+        for m in self.modules():
+            if type(m) == cm.ConvBNReLU:
+                # Fuse the layers in ConvBNReLU module, which is derived from nn.Sequential
+                # Use the default fuser function
+                torch.quantization.fuse_modules(m, ['0', '1', '2'], inplace=True)
+            elif type(m) == cm.ConvBN:
+                torch.quantization.fuse_modules(m, ['0', '1'], inplace=True)
+
+class resnet50_input_nobn(nn.Module):
+    """
+    Tiny-Net just for generating a trace purpose
+    """
+    def __init__(self):
+        super().__init__()
+        self.block = cm.ConvReLU(
+            in_planes=3,
+            out_planes=64,
+            stride=2,
+            kernel_size=7
+        )
+        self.quant = QuantStub()
+        self.dequant = DeQuantStub()
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                m.weight = torch.nn.Parameter(torch.rand(size=m.weight.size()))
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+            elif isinstance(m, nn.BatchNorm2d):
+                m.weight = torch.nn.Parameter(torch.rand(size=m.weight.size()))
+                nn.init.zeros_(m.bias)
+
+    def forward(self, x):
+        x = self.quant(x)
+        x = self.block(x)
+        output = self.dequant(x)
+
+        return output
+
+        # Fuse layers prior to quantization
+
+    def fuse_model(self):
+        for m in self.modules():
+            if type(m) == cm.ConvBNReLU:
+                # Fuse the layers in ConvBNReLU module, which is derived from nn.Sequential
+                # Use the default fuser function
+                torch.quantization.fuse_modules(m, ['0', '1', '2'], inplace=True)
+            elif type(m) == cm.ConvBN:
+                torch.quantization.fuse_modules(m, ['0', '1'], inplace=True)
+            elif type(m) == cm.ConvReLU:
+                torch.quantization.fuse_modules(m, ['0', '1'], inplace=True)
+
 class Seq(nn.Module):
     """
     Two convolution layer back to back
@@ -397,6 +481,10 @@ class TracerTest():
             self.model = test_imagenet_resnet()
         elif self.mode == 'resnet50_conv12':
             self.model = ResNet50_conv12()
+        elif self.mode == 'resnet50_input_conv':
+            self.model = resnet50_input()
+        elif self.mode == 'resnet50_input_conv_nobn':
+            self.model = resnet50_input_nobn()
         else:
             print(self.mode)
             raise ValueError('Unsupported mode')
@@ -404,10 +492,9 @@ class TracerTest():
         self.pruneRangeInCluster = 4
         self.targetSparsity = 0.5
         qatRoundedConfig = torch.quantization.FakeQuantize.with_args(
-            observer=custom_quant.RoundedMovingAverageMinMaxObserver,
+            observer=custom_quant.RoundedMinMaxObserver,
             quant_min=-128,
-            quant_max=127,
-            averaging_constant=0.01
+            quant_max=127
         )
         self.qatConfig = torch.quantization.QConfig(
             activation=qatRoundedConfig
@@ -418,79 +505,6 @@ class TracerTest():
             self.model.fuse_model()
         self.model.qconfig = self.qatConfig
         torch.quantization.prepare_qat(self.model, inplace=True)
-
-        # # Prune the model
-        # if self.mode == 'resnet' or self.mode == 'tiny' or self.mode == 'test'
-        #     for m in self.model.modules():
-        #         if isinstance(m, resnet.BasicBlock):
-        #             custom_pruning.applyBalancedPruning(m.convBN1[0],
-        #                                                "weight",
-        #                                                clusterSize=self.pruneClusterSize,
-        #                                                 pruneRangeInCluster=self.pruneRangeInCluster,
-        #                                                 sparsity=self.targetSparsity
-        #                                                 )
-        #             custom_pruning.applyBalancedPruning(m.convBN2[0],
-        #                                                "weight",
-        #                                                clusterSize=self.pruneClusterSize,
-        #                                                pruneRangeInCluster=self.pruneRangeInCluster,
-        #                                                 sparsity=self.targetSparsity
-        #                                                 )
-        #             if isinstance(m.shortcut, cm.ConvBN):
-        #                 custom_pruning.applyBalancedPruning(m.shortcut[0],
-        #                                                    "weight",
-        #                                                    clusterSize=self.pruneClusterSize,
-        #                                                     pruneRangeInCluster=self.pruneRangeInCluster,
-        #                                                     sparsity=self.targetSparsity
-        #                                                     )
-        # if self.mode == 'resnet' or self.mode == 'tiny' or self.mode == 'test'
-        #     for m in self.model.modules():
-        #         if isinstance(m, resnet.BasicBlock):
-        #             custom_pruning.applyBalancedPruning(m.convBN1[0],
-        #                                                "weight",
-        #                                                clusterSize=self.pruneClusterSize,
-        #                                                 pruneRangeInCluster=self.pruneRangeInCluster,
-        #                                                 sparsity=self.targetSparsity
-        #                                                 )
-        #             custom_pruning.applyBalancedPruning(m.convBN2[0],
-        #                                                "weight",
-        #                                                clusterSize=self.pruneClusterSize,
-        #                                                pruneRangeInCluster=self.pruneRangeInCluster,
-        #                                                 sparsity=self.targetSparsity
-        #                                                 )
-        #             if isinstance(m.shortcut, cm.ConvBN):
-        #                 custom_pruning.applyBalancedPruning(m.shortcut[0],
-        #                                                    "weight",
-        #                                                    clusterSize=self.pruneClusterSize,
-        #                                                     pruneRangeInCluster=self.pruneRangeInCluster,
-        #                                                     sparsity=self.targetSparsity
-        #                                                     )
-        # elif self.mode == 'conv':
-        #     custom_pruning.applyBalancedPruning(self.model.block[0],
-        #                                        "weight",
-        #                                        clusterSize=self.pruneClusterSize,
-        #                                         pruneRangeInCluster=self.pruneRangeInCluster,
-        #                                         sparsity=self.targetSparsity
-        #                                         )
-        # elif self.mode == 'seq':
-        #     custom_pruning.applyBalancedPruning(self.model.convBN1[0],
-        #                                        "weight",
-        #                                        clusterSize=self.pruneClusterSize,
-        #                                         pruneRangeInCluster=self.pruneRangeInCluster,
-        #                                         sparsity=self.targetSparsity
-        #                                         )
-        #     custom_pruning.applyBalancedPruning(self.model.convBN2[0],
-        #                                        "weight",
-        #                                         clusterSize=self.pruneClusterSize,
-        #                                         pruneRangeInCluster=self.pruneRangeInCluster,
-        #                                         sparsity=self.targetSparsity
-        #                                         )
-        # elif self.mode == 'avglinear':
-        #     custom_pruning.applyBalancedPruning(self.model.fc[0],
-        #                                        "weight",
-        #                                         clusterSize=self.pruneClusterSize,
-        #                                         pruneRangeInCluster=self.pruneRangeInCluster,
-        #                                         sparsity=self.targetSparsity
-        #                                         )
 
         for module in self.model.modules():
             if isinstance(module, (nnqat.Linear, nnqat.Conv2d, nniqat.ConvBn2d, nniqat.ConvBnReLU2d, nniqat.ConvReLU2d, nniqat.LinearReLU)):
@@ -518,6 +532,8 @@ class TracerTest():
             dummyInput = torch.rand(size=[1,256,56, 56]) * 4.0 - 2.0
         elif self.mode == 'pointconv':
             dummyInput = torch.rand(size=[1, 4, 4, 4]) * (-1.0) + 4.0
+        elif self.mode == 'resnet50_input_conv' or self.mode == 'resnet50_input_conv_nobn':
+            dummyInput = torch.rand(size=[1, 3, 224, 224])
         else:
             dummyInput = torch.rand(size=[1, 4, 8, 8]) * (-1.0) + 4.0
 
@@ -525,19 +541,19 @@ class TracerTest():
         Run inference twice. only save the input and output on the second try
         The first run is to calibrate the quantization parameters
         """
-        self.model.eval()
+        self.model.apply(torch.quantization.enable_observer)
         if isinstance(dummyInput, tuple):
             self.model(*dummyInput)
         else:
             self.model(dummyInput)
-
         self.model.apply(torch.quantization.disable_observer)
-
+        self.model.eval()
+        tracer = Tracer(self.model)
         # quantized_model = torch.quantization.convert(self.model.eval(), inplace=False)
         if isinstance(dummyInput, tuple):
-            dummyOutput = self.model(*dummyInput)
+            dummyOutput = tracer.getOutput(*dummyInput, layerID=-1)
         else:
-            dummyOutput = self.model(dummyInput)
+            dummyOutput = tracer.getOutput(dummyInput, layerID=-1)
         print("Saves the dummy input and output")
         blobPath = os.path.join(dirname, fileBaseName + '_inout.yaml')
         blobFile = open(blobPath, 'w')
@@ -561,15 +577,16 @@ class TracerTest():
         # We want list to be dumped as in-line format, hence the choice of the default_flow_style
         # See https://stackoverflow.com/questions/56937691/making-yaml-ruamel-yaml-always-dump-lists-inline
         yaml.dump(blobDict, blobFile, default_flow_style=None)
-        tracer = Tracer(self.model)
         tracer.traceModel(dummyInput)
         tracer.annotate(numMemRegions=3)
         tracer.dump(dirname, fileBaseName)
 
 if __name__=='__main__':
     parser = argparse.ArgumentParser(description="testTracer")
-    parser.add_argument('--mode', type=str, choices=['test', 'tiny', 'conv', 'pointconv', 'maxpool', 'add', 'avg', 'seq', 'avglinear',
-                                                     'restest_cifar10', 'restest_imagenet', 'resnet50_conv12'], default='conv',
+    parser.add_argument('--mode', type=str,
+                        choices=['test', 'tiny', 'conv', 'pointconv', 'maxpool', 'add', 'avg', 'seq', 'avglinear',
+                            'restest_cifar10', 'restest_imagenet', 'resnet50_conv12', 'resnet50_input_conv', 'resnet50_input_conv_nobn'],
+                        default='conv',
                         help='Mode. Valid choices are test, tiny, conv, maxpool, add, avg, seq, restest_cifar10, restest_imagenet,'
                              'resnet50_conv12, and avglinear')
     args = parser.parse_args()
@@ -599,6 +616,10 @@ if __name__=='__main__':
         fileBaseName = 'restest_imagenet'
     elif args.mode == 'resnet50_conv12':
         fileBaseName = 'resnet50_conv12'
+    elif args.mode == 'resnet50_input_conv':
+        fileBaseName = 'resnet50_input_conv'
+    elif args.mode == 'resnet50_input_conv_nobn':
+        fileBaseName = 'resnet50_input_conv_nobn'
     else:
         print(args.mode)
         raise ValueError("Unsupported mode")
