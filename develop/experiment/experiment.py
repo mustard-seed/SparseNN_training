@@ -317,12 +317,20 @@ class experimentBase(object):
             custom_prune.unPruneNetwork(self.model)
             needToReapplyWeightMask = True
 
-        self.model.fuse_model()
-        self.model.qconfig = self.qatConfig
-        torch.quantization.prepare_qat(self.model, inplace=True)
+        # self.model.fuse_model()
+        # self.model.qconfig = self.qatConfig
+        # torch.quantization.prepare_qat(self.model, inplace=True)
+        self.model = self.quantize_model_method(self.model, self.qatConfig)
 
         if needToReapplyWeightMask is True:
             self.prune_network(sparsityTarget=self.experimentStatus.targetSparsity)
+
+    @classmethod
+    def quantize_model_method(cls, model, qatConfig):
+        model.fuse_model()
+        model.qconfig = qatConfig
+        model = torch.quantization.prepare_qat(model, inplace=True)
+        return model
 
     def initialize_optimizer (self):
         """
@@ -639,8 +647,9 @@ class experimentBase(object):
             # reinitialize optimizer for each phase
             optimizer.load_state_dict(initialOptimizerState)
 
-            # If loading from checkpoint, then reinitialze the optimizer
+            #I f loading from checkpoint, then reinitialze the optimizer
             # from the checkpoint
+            # Problem: The following lines cause problem when reloading the full experiments, at least when training ResNet-50
             if startEpoch != 0:
                 if self.optimizerStateDict:
                     if (self.multiprocessing is True and hvd.rank() == 0) or self.multiprocessing is False:
@@ -828,7 +837,7 @@ class experimentBase(object):
     def print_model(self):
         print(self.model)
 
-    def trace_model(self, dirnameOverride=None, numMemoryRegions: int=3, modelName: str='model', foldBN: bool=True) -> None:
+    def trace_model(self, dirnameOverride=None, numMemoryRegions: int=3, modelName: str='model', foldBN: bool=True, outputLayerID: int=-1) -> None:
         """
         Trace the model after pruning and quantization, and save the trace and parameters
         :return: None
@@ -844,6 +853,7 @@ class experimentBase(object):
             self.prune_network()
             self.experimentStatus.flagPruned = True
 
+        trace = Tracer(self.model, _foldBN=foldBN)
         """
         Run inference and save a reference input-output pair
         """
@@ -856,7 +866,7 @@ class experimentBase(object):
         for (data, target) in self.valDataLoader:
             sampleIn = data[0].unsqueeze(0)
             print(sampleIn.shape)
-            output = self.model(sampleIn)
+            output = trace.getOutput(sampleIn, outputLayerID)
             break
         inputArray = sampleIn.view(sampleIn.numel()).tolist()
         blobDict['input'] = inputArray
@@ -867,7 +877,6 @@ class experimentBase(object):
         # See https://stackoverflow.com/questions/56937691/making-yaml-ruamel-yaml-always-dump-lists-inline
         yaml.dump(blobDict, blobFile, default_flow_style=None)
 
-        trace = Tracer(self.model, _foldBN=foldBN)
         trace.traceModel(sampleIn)
 
         trace.annotate(numMemRegions=numMemoryRegions)

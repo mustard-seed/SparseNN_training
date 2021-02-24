@@ -9,6 +9,7 @@ import torch.multiprocessing as mp
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 import numpy as np
+import yaml
 
 
 import argparse
@@ -21,6 +22,7 @@ import pruning.pruning as custom_pruning
 from custom_modules.resnet import ResNet, imagenet_resnet50, BasicBlock, BottleneckBlock, conv1x1BN, conv3x3BN
 from utils.meters import ClassificationMeter, TimeMeter
 from experiment.experiment import experimentBase, globalActivationDict, globalWeightDict, hook_activation
+from tracer.tracer import TraceDNN as Tracer
 
 import horovod.torch as hvd
 
@@ -399,6 +401,9 @@ class experimentImagenetResNet50(experimentBase):
 
 
     def prune_network(self, sparsityTarget: float=0.5) -> None:
+        self.prune_network_method(self.model, self.experimentStatus.targetSparsity, self.config)
+
+    def prune_network_method(cls, model, sparsityTarget, config):
         # Don't prune the first layer
         # custom_pruning.applyBalancedPruning(
         #     self.model.inputConvBNReLU[0],
@@ -409,7 +414,7 @@ class experimentImagenetResNet50(experimentBase):
         # )
 
         # Prune the residual blocks
-        for m in self.model.modules():
+        for m in model.modules():
             if isinstance(m, BottleneckBlock):
                 for layer in [m.convBN1[0], m.convBN2[0], m.convBN3[0], m.shortcut]:
                     if not isinstance(layer, nn.Identity):
@@ -424,20 +429,74 @@ class experimentImagenetResNet50(experimentBase):
                         custom_pruning.applyBalancedPruning(
                             layer,
                             'weight',
-                            clusterSize=self.config.pruneCluster,
-                            pruneRangeInCluster=self.config.pruneRangeInCluster,
+                            clusterSize=config.pruneCluster,
+                            pruneRangeInCluster=config.pruneRangeInCluster,
                             sparsity=sparsity
                         )
 
         # Prune the FC layer at the end
         custom_pruning.applyBalancedPruning(
-            self.model.fc,
+            model.fc,
             'weight',
-            clusterSize=self.config.pruneCluster,
-            pruneRangeInCluster=self.config.pruneRangeInCluster,
+            clusterSize=config.pruneCluster,
+            pruneRangeInCluster=config.pruneRangeInCluster,
             sparsity=sparsityTarget
         )
 
+        return model
+
+    def trace_model(self, dirnameOverride=None, numMemoryRegions: int = 3, modelName: str = 'model',
+                    foldBN: bool = True, outputLayerID: int = -1) -> None:
+        """
+        Trace the model after pruning and quantization, and save the trace and parameters
+        :return: None
+        """
+        dirname = self.config.checkpointSaveDir if dirnameOverride is None else dirnameOverride
+        # Prune and quantize the model
+        if self.experimentStatus.flagFusedQuantized is False:
+            self.quantize_model()
+            self.experimentStatus.flagFusedQuantized = True
+
+        if self.experimentStatus.flagPruned is False:
+            # TODO: update the prune_network arugment to use the target sparsity
+            self.prune_network()
+            self.experimentStatus.flagPruned = True
+
+        # Deepcopy doesn't work, do the following instead:
+        # See https://discuss.pytorch.org/t/deep-copying-pytorch-modules/13514/2
+        module = imagenet_resnet50()
+        module = self.quantize_model_method(module, self.qatConfig)
+        module = self.prune_network_method(module, self.experimentStatus.targetSparsity, self.config)
+        module.load_state_dict(self.model.state_dict())
+
+        trace = Tracer(module, _foldBN=foldBN)
+        """
+        Run inference and save a reference input-output pair
+        """
+        blobPath = os.path.join(dirname, modelName + '_inout.yaml')
+        blobFile = open(blobPath, 'w')
+        blobDict: dict = {}
+        self.model.eval()
+        output = None
+        sampleIn = None
+        for (data, target) in self.valDataLoader:
+            sampleIn = data[0].unsqueeze(0)
+            print(sampleIn.shape)
+            output = trace.getOutput(sampleIn, outputLayerID)
+            break
+        inputArray = sampleIn.view(sampleIn.numel()).tolist()
+        blobDict['input'] = inputArray
+
+        outputArray = output.view(output.numel()).tolist()
+        blobDict['output'] = outputArray
+        # We want list to be dumped as in-line format, hence the choice of the default_flow_style
+        # See https://stackoverflow.com/questions/56937691/making-yaml-ruamel-yaml-always-dump-lists-inline
+        yaml.dump(blobDict, blobFile, default_flow_style=None)
+
+        trace.traceModel(sampleIn)
+
+        trace.annotate(numMemRegions=numMemoryRegions)
+        trace.dump(dirname, fileNameBase=modelName)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Imagenet_ResNet50 experiment")
@@ -458,6 +517,8 @@ if __name__ == '__main__':
                         help='Path to the checkpoint to be loaded. Required if --load_checkpoint is set as 1 or 2')
     parser.add_argument('--override_cluster_size', type=int,
                        help='Override the cluster size in the experiment config when performing sparsity evaluation')
+    parser.add_argument('--output_layer_id', type=int, default=-1,
+                        help='ID of the layer to intercept the output during model tracing. Default: -1')
 
 
     args = parser.parse_args()
@@ -485,4 +546,5 @@ if __name__ == '__main__':
     elif args.mode == 'print_model':
         experiment.print_model()
     elif args.mode == 'trace_model':
-        experiment.trace_model(dirnameOverride=os.getcwd(), numMemoryRegions=3, modelName='resnet50_imagenet', foldBN=True)
+        experiment.trace_model(dirnameOverride=os.getcwd(), numMemoryRegions=3, modelName='resnet50_imagenet',
+                               foldBN=True, outputLayerID=args.output_layer_id)

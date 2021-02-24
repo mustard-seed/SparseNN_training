@@ -12,7 +12,7 @@ from torch.nn.utils import fuse_conv_bn_weights
 
 
 import custom_modules.custom_modules as cm
-import quantization.quantization as qt
+import quantization.quantization as custom_quant
 # Custom pruning utility, used to extract cluster size, sparsity, prune range
 import pruning.pruning as cm_prune
 
@@ -371,12 +371,16 @@ class TraceDNN:
         self.defaultPruneCluster = _defaultPruneCluster
         self.defaultPruneRangeInCluster = _defaultPruneRangeInCluster
 
+        self.activation_intercepts = []
+        self.interceptLayerID = 0
+
     def reset(self):
         self.layerID = 0
         self.layerCount = 0
         self.removeHooks()
         self.hookHandles.clear()
         self.layerList.clear()
+        self.activation_intercepts.clear()
         self.inputAdjacencies.clear()
         self.outputAdjacencies.clear()
         self.resetAnnotation()
@@ -559,7 +563,7 @@ class TraceDNN:
         traceFile.close()
         #parameterFile.close()
 
-    def traceHook(self, module, input: Union[T, Tuple[T, T]], output: T) -> T:
+    def traceHook(self, module, input: Union[T, Tuple[T, T]], output: T):
         """
         Pytorch NN module forward hook. Used to intercept NN layer execution order and dependency. This function will be
             called by PyTorch during inference.
@@ -689,13 +693,16 @@ class TraceDNN:
                 weight, bias = fuse_conv_bn_weights(
                     module.weight, module.bias, module.running_mean, module.running_var,
                     module.eps, module.gamma, module.beta)
-            weight_post_process = module.weight_fake_quant
-            weight_post_process.enable_observer()
-            weight_post_process(weight)
-            weight_post_process.disable_observer()
 
             # Determine weight frac bits
-            weightPrecisionScale = weight_post_process.scale.view(1)
+            # weight_post_process = module.weight_fake_quant
+            # weight_post_process.enable_observer()
+            # weight_post_process(weight)
+            # weight_post_process.disable_observer()
+            weight_quantizer = custom_quant.RoundedMinMaxObserver()
+            weight_quantizer.forward(weight)
+            weightPrecisionScale, _ = weight_quantizer.calculate_qparams()
+            weightPrecisionScale = weightPrecisionScale.view(1)
             weightFracBits = int(torch.round(torch.log2(1.0 / weightPrecisionScale)).view(1)[0].item())
             hasBias = False if bias is None else True
 
@@ -869,7 +876,12 @@ class TraceDNN:
         self.layerCount += 1
 
         # print("Layer ID: {} \n Modified output: {}".format(self.layerID-1, output.view(outputNumel)[0:2]))
-        return output
+
+    def interceptHook(self, module, input: Union[T, Tuple[T, T]], output: T):
+        # print ('Intercepting layer {}'.format(self.layerID))
+        if self.layerID == self.interceptLayerID:
+            self.activation_intercepts.append(deepcopy(output.clone().detach()))
+        self.layerID += 1
 
     def traceModel(self, input: Union[T, Tuple[T, T]]) -> T:
         """
@@ -895,16 +907,45 @@ class TraceDNN:
         # 3. Run the model once, and the hooks should be called.
         self.module.eval()
         if isinstance(input, tuple):
-            output = self.module(*input)
+            self.module(*input)
         else:
-            output = self.module(input)
+            self.module(input)
         #output = self.module(input)
 
         # 4. Remove the hooks
         self.removeHooks()
 
-        return output
+    def getOutput(self, input: Union[T, Tuple[T, T]], layerID=-1) -> T:
+        # 1. Reset everything
+        self.reset()
 
+        self.interceptLayerID = layerID
+        # 2. Apply hooks
+        stack = [self.module]
+        while len(stack) > 0:
+            module = stack.pop()
+            # If module is a leaf, then add to the graph
+            if isinstance(module, (
+            QuantStub, DeQuantStub, cm.EltwiseAdd, nn.Conv2d, nn.Linear, cm.MaxPool2dRelu, cm.AvgPool2dRelu)):
+                # print('Adding intercept hook to layer{}'.format(module))
+                handle = module.register_forward_hook(self.interceptHook)
+                self.hookHandles.append(handle)
+            # If the module is not a leaf, then push its children onto the stack
+            else:
+                for child in module.children():
+                    stack.append(child)
 
+        # 3. Run the model once, and the hooks should be called.
+        self.module.eval()
+        output = None
+        if isinstance(input, tuple):
+            output = self.module(*input)
+        else:
+            output = self.module(input)
 
+        if layerID == -1:
+            # print('Dumping the final output')
+            return output
 
+        print('Dumping output of layer {}'.format(layerID))
+        return self.activation_intercepts[0]

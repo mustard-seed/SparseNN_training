@@ -37,8 +37,8 @@ export PSM2_IDENTIFY=1
 # export I_MPI_FALLBACK=0
 export OMP_NUM_THREADS=$num_core_per_socket
 export KMP_AFFINITY=granularity=fine,compact,1,0
+#export num_proc=16
 export num_proc=16
-
 ### Use PBS's RSH instead of SSH
 # export I_MPI_HYDRA_BOOTSTRAP=rsh
 # export I_MPI_HYDRA_BOOTSTRAP_EXEC=pbs_tmrsh
@@ -61,23 +61,42 @@ echo "Nodefile List       " $PBS_NODEFILE
 ### Execute on multinode. One process per socket, and bind each process to all the cores on the socket
 ### See https://stackoverflow.com/questions/28216897/syntax-of-the-map-by-option-in-openmpi-mpirun-v1-8
 ### mpiexec won't work 
-time mpirun -x LD_LIBRARY_PATH \
-    -x OMP_NUM_THREADS \
-    -x PATH \
-    --map-by ppr:1:socket:pe=$num_core_per_socket --report-bindings \
-    --oversubscribe -n $num_proc \
-    python ImagenetResNet50Experiment.py --mode train --config_file experiment_configs/config_imagenet_resnet50_pretrained.yaml \
-    --load_checkpoint 3 \
-    --multiprocessing | tee output.txt
 #time mpirun -x LD_LIBRARY_PATH \
 #    -x OMP_NUM_THREADS \
 #    -x PATH \
 #    --map-by ppr:1:socket:pe=$num_core_per_socket --report-bindings \
 #    --oversubscribe -n $num_proc \
-#    python ImagenetResNet50Experiment.py --mode train --config_file experiment_configs/config_imagenet_resnet50_baseline2_BPc2r4_quantize.yaml \
+#    python ImagenetResNet50Experiment.py --mode train --config_file experiment_configs/config_imagenet_resnet50_pretrained.yaml \
+#    --load_checkpoint 3 \
+#    --multiprocessing | tee output.txt
+
+#time mpirun -x LD_LIBRARY_PATH \
+#    -x OMP_NUM_THREADS \
+#    -x PATH \
+#    --map-by ppr:1:socket:pe=$num_core_per_socket --report-bindings \
+#    --oversubscribe -n $num_proc \
+#    python ImagenetResNet50Experiment.py --mode train --config_file resnet50_sweep/config_imagenet_resnet50_pretrained_iter_BPc2r8extra.yaml \
 #    --load_checkpoint 2  \
-#    --checkpoint_path experiment_logs/imagenet_resnet50_baseline2_BPc2r4_log/ckpt_epoch60.pth.tar \
+#    --checkpoint_path experiment_logs/imagenet_resnet50_pretrained_log/ckpt_epoch4.pth.tar \
 #    --multiprocessing  | tee output.txt
+#time mpirun -x LD_LIBRARY_PATH \
+#    -x OMP_NUM_THREADS \
+#    -x PATH \
+#    --map-by ppr:1:socket:pe=$num_core_per_socket --report-bindings \
+#    --oversubscribe -n $num_proc \
+#    python ImagenetResNet50Experiment.py --mode train --config_file resnet50_sweep/config_imagenet_resnet50_pretrained_iter_BPc2r8extra_quantize.yaml \
+#    --load_checkpoint 2  \
+#    --checkpoint_path resnet50_sweep/logs/imagenet_resnet50_pretrained_iter_BPc2r8extra_log/ckpt_epoch28.pth.tar \
+#    --multiprocessing  | tee output.txt
+time mpirun -x LD_LIBRARY_PATH \
+    -x OMP_NUM_THREADS \
+    -x PATH \
+    --map-by ppr:1:socket:pe=$num_core_per_socket --report-bindings \
+    --oversubscribe -n $num_proc \
+    python ImagenetResNet50Experiment.py --mode train --config_file resnet50_sweep/config_imagenet_resnet50_pretrained_iter_BPc2r8extra_quantize.yaml \
+    --load_checkpoint 1  \
+    --checkpoint_path resnet50_sweep/logs/imagenet_resnet50_pretrained_iter_BPc2r8extra_quantize_log/ckpt_epoch5.pth.tar \
+    --multiprocessing  | tee output.txt
 #time mpirun -x LD_LIBRARY_PATH \
 #      -x OMP_NUM_THREADS \
 #      -x PATH \
