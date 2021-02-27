@@ -21,6 +21,7 @@ import torch.nn.qat as nnqat
 import os
 import yaml
 import argparse
+import math
 
 def toy_resnet() -> resnet.ResNet:
     """
@@ -300,6 +301,7 @@ class resnet50_input_nobn(nn.Module):
         super().__init__()
         self.block = cm.ConvReLU(
             in_planes=3,
+            #out_planes=64,
             out_planes=64,
             stride=2,
             kernel_size=7
@@ -333,6 +335,47 @@ class resnet50_input_nobn(nn.Module):
             elif type(m) == cm.ConvBN:
                 torch.quantization.fuse_modules(m, ['0', '1'], inplace=True)
             elif type(m) == cm.ConvReLU:
+                torch.quantization.fuse_modules(m, ['0', '1'], inplace=True)
+
+class resnet50_conv(nn.Module):
+    """
+    Used to generate resnet50 conv layer
+    """
+    def __init__(self):
+        super().__init__()
+        self.block = resnet.conv1x1BN(in_planes=64,
+                                 out_planes=64,
+                                 stride=1,
+                                 require_relu=True)
+        self.quant = QuantStub()
+        self.dequant = DeQuantStub()
+        # weight_range = math.pow(2.0, 0.0)
+        weight_range = math.pow(2.0, 4.0)
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                m.weight = torch.nn.Parameter(torch.rand(size=m.weight.size()) * 1.9 * weight_range - weight_range)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+            elif isinstance(m, nn.BatchNorm2d):
+                m.weight = torch.nn.Parameter(torch.rand(size=m.weight.size()) * 1.9 * weight_range - weight_range)
+                nn.init.zeros_(m.bias)
+
+    def forward(self, x):
+        x = self.quant(x)
+        x = self.block(x)
+        output = self.dequant(x)
+
+        return output
+
+        # Fuse layers prior to quantization
+
+    def fuse_model(self):
+        for m in self.modules():
+            if type(m) == cm.ConvBNReLU:
+                # Fuse the layers in ConvBNReLU module, which is derived from nn.Sequential
+                # Use the default fuser function
+                torch.quantization.fuse_modules(m, ['0', '1', '2'], inplace=True)
+            elif type(m) == cm.ConvBN:
                 torch.quantization.fuse_modules(m, ['0', '1'], inplace=True)
 
 class Seq(nn.Module):
@@ -485,6 +528,8 @@ class TracerTest():
             self.model = resnet50_input()
         elif self.mode == 'resnet50_input_conv_nobn':
             self.model = resnet50_input_nobn()
+        elif self.mode == 'resnet50_conv':
+            self.model = resnet50_conv()
         else:
             print(self.mode)
             raise ValueError('Unsupported mode')
@@ -532,20 +577,37 @@ class TracerTest():
             dummyInput = torch.rand(size=[1,256,56, 56]) * 4.0 - 2.0
         elif self.mode == 'pointconv':
             dummyInput = torch.rand(size=[1, 4, 4, 4]) * (-1.0) + 4.0
-        elif self.mode == 'resnet50_input_conv' or self.mode == 'resnet50_input_conv_nobn':
+        elif self.mode == 'resnet50_input_conv':
             dummyInput = torch.rand(size=[1, 3, 224, 224])
+        elif self.mode == 'resnet50_input_conv_nobn':
+            dummyInput = torch.rand(size=[1, 3, 224, 224])
+        elif self.mode == 'resnet50_conv':
+            input_range = math.pow(2.0, 2.0)
+            dummyInput = torch.rand(size=[1, 64, 56, 56]) * 1.9 * input_range - input_range
         else:
             dummyInput = torch.rand(size=[1, 4, 8, 8]) * (-1.0) + 4.0
 
         """
-        Run inference twice. only save the input and output on the second try
-        The first run is to calibrate the quantization parameters
+        Run inference thrice. 
+        The first run is to calibrate the batch normalization parameters
+        """
+        self.model.train(mode=True)
+        self.model.apply(torch.quantization.disable_observer)
+        if isinstance(dummyInput, tuple):
+            self.model(*dummyInput)
+        else:
+            self.model(dummyInput)
+        """
+        The second run is to calibrate the quantization observers
         """
         self.model.apply(torch.quantization.enable_observer)
         if isinstance(dummyInput, tuple):
             self.model(*dummyInput)
         else:
             self.model(dummyInput)
+        """
+        Finally, trace the model
+        """
         self.model.apply(torch.quantization.disable_observer)
         self.model.eval()
         tracer = Tracer(self.model)
@@ -585,7 +647,8 @@ if __name__=='__main__':
     parser = argparse.ArgumentParser(description="testTracer")
     parser.add_argument('--mode', type=str,
                         choices=['test', 'tiny', 'conv', 'pointconv', 'maxpool', 'add', 'avg', 'seq', 'avglinear',
-                            'restest_cifar10', 'restest_imagenet', 'resnet50_conv12', 'resnet50_input_conv', 'resnet50_input_conv_nobn'],
+                            'restest_cifar10', 'restest_imagenet', 'resnet50_conv12', 'resnet50_conv',
+                                 'resnet50_input_conv', 'resnet50_input_conv_nobn'],
                         default='conv',
                         help='Mode. Valid choices are test, tiny, conv, maxpool, add, avg, seq, restest_cifar10, restest_imagenet,'
                              'resnet50_conv12, and avglinear')
@@ -620,6 +683,8 @@ if __name__=='__main__':
         fileBaseName = 'resnet50_input_conv'
     elif args.mode == 'resnet50_input_conv_nobn':
         fileBaseName = 'resnet50_input_conv_nobn'
+    elif args.mode == 'resnet50_conv':
+        fileBaseName = 'resnet50_conv'
     else:
         print(args.mode)
         raise ValueError("Unsupported mode")

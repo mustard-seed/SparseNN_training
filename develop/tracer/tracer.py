@@ -696,12 +696,14 @@ class TraceDNN:
                     module.eps, module.gamma, module.beta)
 
             # Determine weight frac bits
-            # weight_post_process = module.weight_fake_quant
+            # The quantization observer for weight of fused conv_bn already monitors the folded weights
+            # see: https://github.com/pytorch/pytorch/blob/7f73f1d591afba823daa4a99a939217fb54d7688/torch/nn/intrinsic/qat/modules/conv_fused.py#L113
+            weight_quantizer = module.weight_fake_quant
             # weight_post_process.enable_observer()
             # weight_post_process(weight)
             # weight_post_process.disable_observer()
-            weight_quantizer = custom_quant.RoundedMinMaxObserver()
-            weight_quantizer.forward(weight)
+            # weight_quantizer = custom_quant.RoundedMinMaxObserver()
+            # weight_quantizer.forward(weight)
             weightPrecisionScale, _ = weight_quantizer.calculate_qparams()
             weightPrecisionScale = weightPrecisionScale.view(1)
             weightFracBits = int(torch.round(torch.log2(1.0 / weightPrecisionScale)).view(1)[0].item())
@@ -948,5 +950,6 @@ class TraceDNN:
             # print('Dumping the final output')
             return output
 
+        self.removeHooks()
         print('Dumping output of layer {}'.format(layerID))
         return self.activation_intercepts[0]
