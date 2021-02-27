@@ -3,7 +3,7 @@
 #See Section 4.2 of Deep Residual Learning for Image Classification for settings
 
 # Iterations, etc
-numEpochToTrain: 4
+numEpochToTrain: 10
 batchSizePerWorker: 32
 numThreadsPerWorker: 28
 numPhaseToTrain: 1
@@ -18,10 +18,10 @@ numPhaseToTrain: 1
 lrInitialBase: 0.001
 lrPeakBase: 0.001
 lrWarmupEpochs: 1
-lrStepSize: 2
+lrStepSize: 5
 lrReductionFactor: 0.1
 lrMomentum: 0.9
-lrMPAdjustmentWarmUpEpochs: 3
+lrMPAdjustmentWarmUpEpochs: 1
 
 # Loss contribution
 enableLossActivation: False
@@ -32,8 +32,10 @@ lossWeightL1Lambda: 0.00002
 lossWeightL2Lambda: 0.0001
 
 # Pruning and quantization parameters
-prune: False
-pruneCluster: 4
+prune: True
+pruneCluster: 2
+pruneRangeInCluster: 4
+sparsityIncrement: 0.75
 pruneThreshold: 0.005
 quantize: False
 numUpdateBNStatsEpochs: 100
@@ -47,8 +49,8 @@ dataTrainDir: '/homes/jmusel/jmuse/imagenet/train'
 dataValDir: '/homes/jmusel/jmuse/imagenet/val'
 
 # Checkpoints
-checkpointSaveDir: 'experiment_logs/imagenet_resnet50_pretrained_log'
+checkpointSaveDir: 'experiment_logs/imagenet_resnet50_pretrained_BPc2r4'
 checkpointSaveFileNameFormat: 'ckpt_epoch{}.pth.tar'
 
 # Log Dir
-logDir: 'experiment_logs/imagenet_resnet50_pretrained_log'
+logDir: 'experiment_logs/imagenet_resnet50_pretrained_BPc2r4'
