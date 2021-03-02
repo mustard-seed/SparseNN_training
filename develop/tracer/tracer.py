@@ -707,6 +707,9 @@ class TraceDNN:
             weightPrecisionScale, _ = weight_quantizer.calculate_qparams()
             weightPrecisionScale = weightPrecisionScale.view(1)
             weightFracBits = int(torch.round(torch.log2(1.0 / weightPrecisionScale)).view(1)[0].item())
+            # Just use the quantizer to quantize the weights before exporting
+            weight = weight_quantizer.forward(weight)
+
             hasBias = False if bias is None else True
 
             # Determine the SpW parameters

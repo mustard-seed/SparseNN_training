@@ -837,50 +837,14 @@ class experimentBase(object):
     def print_model(self):
         print(self.model)
 
-    def trace_model(self, dirnameOverride=None, numMemoryRegions: int=3, modelName: str='model', foldBN: bool=True, outputLayerID: int=-1) -> None:
+    def trace_model(self, dirnameOverride=None, numMemoryRegions: int=3, modelName: str='model', foldBN: bool=True,
+                    outputLayerID: int=-1,
+                    custom_image_path=None) -> None:
         """
         Trace the model after pruning and quantization, and save the trace and parameters
         :return: None
         """
-        dirname = self.config.checkpointSaveDir if dirnameOverride is None else dirnameOverride
-        # Prune and quantize the model
-        if self.experimentStatus.flagFusedQuantized is False:
-            self.quantize_model()
-            self.experimentStatus.flagFusedQuantized = True
-
-        if self.experimentStatus.flagPruned is False:
-            #TODO: update the prune_network arugment to use the target sparsity
-            self.prune_network()
-            self.experimentStatus.flagPruned = True
-
-        trace = Tracer(self.model, _foldBN=foldBN)
-        """
-        Run inference and save a reference input-output pair
-        """
-        blobPath = os.path.join(dirname, modelName + '_inout.yaml')
-        blobFile = open(blobPath, 'w')
-        blobDict: dict = {}
-        self.model.eval()
-        output = None
-        sampleIn = None
-        for (data, target) in self.valDataLoader:
-            sampleIn = data[0].unsqueeze(0)
-            print(sampleIn.shape)
-            output = trace.getOutput(sampleIn, outputLayerID)
-            break
-        inputArray = sampleIn.view(sampleIn.numel()).tolist()
-        blobDict['input'] = inputArray
-
-        outputArray = output.view(output.numel()).tolist()
-        blobDict['output'] = outputArray
-        # We want list to be dumped as in-line format, hence the choice of the default_flow_style
-        # See https://stackoverflow.com/questions/56937691/making-yaml-ruamel-yaml-always-dump-lists-inline
-        yaml.dump(blobDict, blobFile, default_flow_style=None)
-
-        trace.traceModel(sampleIn)
-
-        trace.annotate(numMemRegions=numMemoryRegions)
-        trace.dump(dirname, fileNameBase=modelName)
+        pass
 
 
 

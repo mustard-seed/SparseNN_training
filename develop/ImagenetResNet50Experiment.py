@@ -8,6 +8,7 @@ import torch.utils.data.distributed as distributed
 import torch.multiprocessing as mp
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
+from PIL import Image
 import numpy as np
 import yaml
 
@@ -50,14 +51,14 @@ class experimentImagenetResNet50(experimentBase):
             This is popularly used to train the Inception networks.
         """
         # Might've accidentally used ImageNet's settings....
-        train_transform = transforms.Compose([
+        self.train_transform = transforms.Compose([
                                         transforms.RandomResizedCrop(size=224, scale=(0.5, 1.0)),
                                         transforms.RandomHorizontalFlip(),
                                         transforms.ToTensor(),
                                         transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                                              std=[0.229, 0.224, 0.225])
                                         ])
-        val_transform = transforms.Compose([
+        self.val_transform = transforms.Compose([
             transforms.Resize(256),
             transforms.CenterCrop(224),
             transforms.ToTensor(),
@@ -65,7 +66,7 @@ class experimentImagenetResNet50(experimentBase):
                                  std=[0.229, 0.224, 0.225])
         ])
         self.trainDataSet = datasets.ImageFolder(datasetTrainDir,
-                                           transform=train_transform)
+                                           transform=self.train_transform)
         self.trainDataSampler = distributed.DistributedSampler(
             self.trainDataSet, num_replicas=hvd.size(), rank=hvd.rank()
         ) if multiprocessing is True \
@@ -82,7 +83,7 @@ class experimentImagenetResNet50(experimentBase):
             **dataLoaderKwargs
         )
         self.valDataSet = datasets.ImageFolder(datasetValDir,
-                                           transform=val_transform)
+                                           transform=self.val_transform)
 
         self.valDataSampler = distributed.DistributedSampler(
             self.valDataSet, num_replicas=hvd.size(), rank=hvd.rank()
@@ -446,7 +447,7 @@ class experimentImagenetResNet50(experimentBase):
         return model
 
     def trace_model(self, dirnameOverride=None, numMemoryRegions: int = 3, modelName: str = 'model',
-                    foldBN: bool = True, outputLayerID: int = -1) -> None:
+                    foldBN: bool = True, outputLayerID: int = -1, custom_image_path=None) -> None:
         """
         Trace the model after pruning and quantization, and save the trace and parameters
         :return: None
@@ -468,34 +469,55 @@ class experimentImagenetResNet50(experimentBase):
         module = self.quantize_model_method(module, self.qatConfig)
         module = self.prune_network_method(module, self.experimentStatus.targetSparsity, self.config)
         module.load_state_dict(self.model.state_dict())
-        module.eval()
-        trace = Tracer(module, _foldBN=foldBN)
-        """
-        Run inference and save a reference input-output pair
-        """
-        blobPath = os.path.join(dirname, modelName + '_inout.yaml')
-        blobFile = open(blobPath, 'w')
-        blobDict: dict = {}
-        output = None
-        sampleIn = None
-        for (data, target) in self.valDataLoader:
-            sampleIn = data[0].unsqueeze(0)
-            print(sampleIn.shape)
-            output = trace.getOutput(sampleIn, outputLayerID)
-            break
-        inputArray = sampleIn.view(sampleIn.numel()).tolist()
-        blobDict['input'] = inputArray
+        with torch.no_grad():
+            # Hack
+            # module.inputConvBNReLU._modules['0'].running_mean.zero_()
+            # module.inputConvBNReLU._modules['0'].beta.zero_()
+            # end of hack
+            module.eval()
+            trace = Tracer(module, _foldBN=foldBN)
+            """
+            Run inference and save a reference input-output pair
+            """
+            blobPath = os.path.join(dirname, modelName + '_inout.yaml')
+            blobFile = open(blobPath, 'w')
+            blobDict: dict = {}
+            output = None
+            sampleIn = None
+            if custom_image_path is None:
+                for (data, target) in self.valDataLoader:
+                    sampleIn = data[0].unsqueeze(0)
+                    print(sampleIn.shape)
+                    output = trace.getOutput(sampleIn, outputLayerID)
+                    break
+            else:
+                print('Using custom image for inference tracing: {}'.format(custom_image_path))
+                img = Image.open(custom_image_path)
+                img = img.convert('RGB')
+                # val_transform = transforms.Compose([
+                #     transforms.Resize(256),
+                #     transforms.CenterCrop(224),
+                #     transforms.ToTensor(),
+                #     transforms.Normalize(mean=[0.000, 0.000, 0.000],
+                #                          std=[0.229, 0.224, 0.225])
+                # ])
+                sampleIn = self.val_transform(img)
+                sampleIn = sampleIn.unsqueeze(0)
+                print(sampleIn.shape)
+                output = trace.getOutput(sampleIn, outputLayerID)
+            inputArray = sampleIn.view(sampleIn.numel()).tolist()
+            blobDict['input'] = inputArray
 
-        outputArray = output.view(output.numel()).tolist()
-        blobDict['output'] = outputArray
-        # We want list to be dumped as in-line format, hence the choice of the default_flow_style
-        # See https://stackoverflow.com/questions/56937691/making-yaml-ruamel-yaml-always-dump-lists-inline
-        yaml.dump(blobDict, blobFile, default_flow_style=None)
+            outputArray = output.view(output.numel()).tolist()
+            blobDict['output'] = outputArray
+            # We want list to be dumped as in-line format, hence the choice of the default_flow_style
+            # See https://stackoverflow.com/questions/56937691/making-yaml-ruamel-yaml-always-dump-lists-inline
+            yaml.dump(blobDict, blobFile, default_flow_style=None)
 
-        trace.traceModel(sampleIn)
+            trace.traceModel(sampleIn)
 
-        trace.annotate(numMemRegions=numMemoryRegions)
-        trace.dump(dirname, fileNameBase=modelName)
+            trace.annotate(numMemRegions=numMemoryRegions)
+            trace.dump(dirname, fileNameBase=modelName)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Imagenet_ResNet50 experiment")
@@ -518,6 +540,7 @@ if __name__ == '__main__':
                        help='Override the cluster size in the experiment config when performing sparsity evaluation')
     parser.add_argument('--output_layer_id', type=int, default=-1,
                         help='ID of the layer to intercept the output during model tracing. Default: -1')
+    parser.add_argument('--custom_image_path', type=str, default=None, help='Path to the image to run inference on during tracing')
 
 
     args = parser.parse_args()
@@ -546,4 +569,4 @@ if __name__ == '__main__':
         experiment.print_model()
     elif args.mode == 'trace_model':
         experiment.trace_model(dirnameOverride=os.getcwd(), numMemoryRegions=3, modelName='resnet50_imagenet',
-                               foldBN=True, outputLayerID=args.output_layer_id)
+                               foldBN=True, outputLayerID=args.output_layer_id, custom_image_path=args.custom_image_path)
