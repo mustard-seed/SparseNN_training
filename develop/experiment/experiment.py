@@ -702,11 +702,26 @@ class experimentBase(object):
         with torch.no_grad():
             for batchIdx, (data, target) in enumerate(self.valDataLoader):
                 self.evaluate(data, target, isTrain=False)
+                if int(batchIdx + 1) % 10 == 0:
+                    if self.multiprocessing is False or (self.multiprocessing is True and hvd.rank() == 0):
+                        print('Validating: {0}/{1}\n'.format(batchIdx, len(self.valDataLoader)))
                 # End of one validation iteration in the epoch
             # End of one validation epoch
 
             # Log the validation epoch
             self.valMeter.log(epoch + self.experimentStatus.numPhaseTrained * self.config.numEpochToTrain)
+
+        if self.multiprocessing is False or (self.multiprocessing is True and hvd.rank() == 0):
+            print('Validation Loss {loss:.4f}\t'
+                  'Prec@1 {top1:.3f})\t'
+                  'Quantized: {quantized}\t'
+                  'Pruned: {pruned}\t'
+                  'Target Sparsity: {sparsity:.4f}'.format(
+                loss=self.valMeter.aggregateLoss.avg,
+                top1=self.valMeter.aggregateAccuracyTop1.avg,
+                quantized=self.experimentStatus.flagFusedQuantized,
+                pruned=self.experimentStatus.flagPruned,
+                sparsity=self.experimentStatus.targetSparsity))
 
         remove_hook_activation(forwardHookHandlesDict=fowardHookHandles)
 
@@ -846,6 +861,15 @@ class experimentBase(object):
         """
         pass
 
+    def eval_prep(self):
+        if self.experimentStatus.flagFusedQuantized is False:
+            self.quantize_model()
+            self.experimentStatus.flagFusedQuantized = True
+
+        if self.experimentStatus.flagPruned is False:
+            # TODO: update the prune_network arugment to use the target sparsity
+            self.prune_network()
+            self.experimentStatus.flagPruned = True
 
 
 

@@ -30,10 +30,10 @@ class ConvBNReLU(nn.Sequential):
         )
 
 class ConvReLU(nn.Sequential):
-    def __init__(self, in_planes, out_planes, kernel_size=3, stride=1, groups=1):
+    def __init__(self, in_planes, out_planes, kernel_size=3, stride=1, groups=1, bias=False):
         padding = (kernel_size - 1) // 2
         super(ConvReLU, self).__init__(
-            nn.Conv2d(in_planes, out_planes, kernel_size, stride, padding, groups=groups, bias=False),
+            nn.Conv2d(in_planes, out_planes, kernel_size, stride, padding, groups=groups, bias=bias),
             # Replace with ReLU
             nn.ReLU(inplace=False)
         )

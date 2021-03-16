@@ -183,37 +183,8 @@ class experimentImagenetResNet50(experimentBase):
         return F.cross_entropy(input=output, target=target)
 
     def apply_hook_activation(self, module: torch.nn.Module, prefix=None) -> dict:
-        """
-        Apply hook on the model. Cannot be used recursively
-        :param module: Not used
-        :param prefix: Not used
-        :return: Handles to the activation interception hooks
-        """
-        pruneDict = {
-            'inputConvBNReLU': self.model.inputConvBNReLU,
-            'maxpoolReLU': self.model.maxpoolrelu,
-            'averagePool': self.model.averagePool
-        }
-        # Add the residual blocks to the dictionary
-        # Don't prune the input tensor of the elementwise add operation
-        blockId = 0
-        for m in self.model.modules():
-            if isinstance(m, BottleneckBlock):
-                name = 'block_{}_layer0'.format(blockId)
-                pruneDict[name] = m.convBN1
-                name = 'block_{}_layer1'.format(blockId)
-                pruneDict[name] = m.convBN2
-                name = 'block_{}_out'.format(blockId)
-                #Do not prune the output of convBN3
-                pruneDict[name] = m
-                blockId +=1
-        # Don't prune the output of the final fc layer
-        forwardHookHandlesDict = {}
-        for name, m in pruneDict.items():
-            handle = m.register_forward_hook(hook_activation)
-            forwardHookHandlesDict[name] = handle
-
-        return forwardHookHandlesDict
+        myDict = {}
+        return myDict
 
     def extract_weight(self, module: torch.nn.Module) -> None:
         """
@@ -454,14 +425,7 @@ class experimentImagenetResNet50(experimentBase):
         """
         dirname = self.config.checkpointSaveDir if dirnameOverride is None else dirnameOverride
         # Prune and quantize the model
-        if self.experimentStatus.flagFusedQuantized is False:
-            self.quantize_model()
-            self.experimentStatus.flagFusedQuantized = True
-
-        if self.experimentStatus.flagPruned is False:
-            # TODO: update the prune_network arugment to use the target sparsity
-            self.prune_network()
-            self.experimentStatus.flagPruned = True
+        self.eval_prep()
 
         # Deepcopy doesn't work, do the following instead:
         # See https://discuss.pytorch.org/t/deep-copying-pytorch-modules/13514/2
@@ -475,7 +439,8 @@ class experimentImagenetResNet50(experimentBase):
             # module.inputConvBNReLU._modules['0'].beta.zero_()
             # end of hack
             module.eval()
-            trace = Tracer(module, _foldBN=foldBN)
+            trace = Tracer(module, _foldBN=foldBN, _defaultPruneCluster=self.config.pruneCluster,
+                           _defaultPruneRangeInCluster=self.config.pruneRangeInCluster)
             """
             Run inference and save a reference input-output pair
             """
@@ -521,9 +486,9 @@ class experimentImagenetResNet50(experimentBase):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Imagenet_ResNet50 experiment")
-    parser.add_argument('--mode', type=str, choices=['train', 'evaluate_sparsity', 'print_model', 'trace_model'],
+    parser.add_argument('--mode', type=str, choices=['train', 'evaluate_sparsity', 'print_model', 'trace_model', 'validate'],
                         default='train',
-                        help='Mode. Valid choices are train, evaluate_sparsity, and print model')
+                        help='Mode. Valid choices are train, evaluate_sparsity, print model, trace_model, and validate')
     parser.add_argument('--config_file', type=str, required=True,
                         help='Path to the experiment configuration file. Required')
     parser.add_argument('--load_checkpoint', type=int, choices=[0, 1, 2, 3], default=0,
@@ -541,6 +506,7 @@ if __name__ == '__main__':
     parser.add_argument('--output_layer_id', type=int, default=-1,
                         help='ID of the layer to intercept the output during model tracing. Default: -1')
     parser.add_argument('--custom_image_path', type=str, default=None, help='Path to the image to run inference on during tracing')
+    parser.add_argument('--custom_sparsity', type=float, default=None, help='Override the sparsity target with a custom value')
 
 
     args = parser.parse_args()
@@ -564,9 +530,21 @@ if __name__ == '__main__':
         newConfigFilePath = os.path.join(logPath, configFileName)
         shutil.copy(args.config_file, newConfigFilePath)
     elif args.mode == 'evaluate_sparsity':
+        if args.custom_sparsity is not None:
+            experiment.experimentStatus.targetSparsity = args.custom_sparsity
         experiment.save_sparsity_stats(args.override_cluster_size, numBatches=20)
     elif args.mode == 'print_model':
         experiment.print_model()
     elif args.mode == 'trace_model':
+        if args.custom_sparsity is not None:
+            experiment.experimentStatus.targetSparsity = args.custom_sparsity
         experiment.trace_model(dirnameOverride=os.getcwd(), numMemoryRegions=3, modelName='resnet50_imagenet',
                                foldBN=True, outputLayerID=args.output_layer_id, custom_image_path=args.custom_image_path)
+    elif args.mode == 'validate':
+        if args.custom_sparsity is not None:
+            experiment.experimentStatus.targetSparsity = args.custom_sparsity
+        if experiment.multiprocessing is False or (experiment.multiprocessing is True and hvd.rank() == 0):
+            print('Running inference on the entire validation set. Target sparsity = {level:.4f}'
+                  .format(level=experiment.experimentStatus.targetSparsity))
+        experiment.eval_prep()
+        experiment.validate(epoch=0)
