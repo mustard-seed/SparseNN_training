@@ -27,7 +27,7 @@ lossWeightL2Lambda: 0.0001
 
 # Pruning and quantization parameters
 prune: True
-pruneCluster: 1
+pruneCluster: 4
 pruneRangeInCluster: 4
 sparsityIncrement: 0.25
 pruneThreshold: 0.005
@@ -43,8 +43,8 @@ dataTrainDir: '/homes/jmusel/jmuse/imagenet/train'
 dataValDir: '/homes/jmusel/jmuse/imagenet/val'
 
 # Checkpoints
-checkpointSaveDir: 'resnet50_sweep/logs/dummy_resnet50_c1r4_log'
+checkpointSaveDir: 'resnet50_sweep/logs/dummy_resnet50_c4r4_log'
 checkpointSaveFileNameFormat: 'ckpt_epoch{}.pth.tar'
 
 # Log Dir
-logDir: 'resnet50_sweep/logs/dummy_resnet50_c1r4_log'
+logDir: 'resnet50_sweep/logs/dummy_resnet50_c4r4_log'

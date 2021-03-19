@@ -70,14 +70,23 @@ echo "Nodefile List       " $PBS_NODEFILE
 #    --load_checkpoint 3 \
 #    --multiprocessing | tee output.txt
 
+time mpirun -x LD_LIBRARY_PATH \
+    -x OMP_NUM_THREADS \
+    -x PATH \
+    --map-by ppr:1:socket:pe=$num_core_per_socket --report-bindings \
+    --oversubscribe -n $num_proc \
+    python ImagenetResNet50Experiment.py --mode train --config_file resnet50_sweep/config_imagenet_resnet50_pretrained_quantize.yaml \
+    --load_checkpoint 2  \
+    --checkpoint_path experiment_logs/imagenet_resnet50_pretrained_log/ckpt_epoch4.pth.tar \
+    --multiprocessing  | tee output.txt
 #time mpirun -x LD_LIBRARY_PATH \
 #    -x OMP_NUM_THREADS \
 #    -x PATH \
 #    --map-by ppr:1:socket:pe=$num_core_per_socket --report-bindings \
 #    --oversubscribe -n $num_proc \
-#    python ImagenetResNet50Experiment.py --mode train --config_file resnet50_sweep/config_imagenet_resnet50_pretrained_iter_BPc2r8extra.yaml \
-#    --load_checkpoint 2  \
-#    --checkpoint_path experiment_logs/imagenet_resnet50_pretrained_log/ckpt_epoch4.pth.tar \
+#    python ImagenetResNet50Experiment.py --mode train --config_file resnet50_sweep/config_imagenet_resnet50_pretrained_quantize.yaml \
+#    --load_checkpoint 1  \
+#    --checkpoint_path resnet50_sweep/logs/imagenet_resnet50_pretrained_quantize_bias_log/ckpt_epoch5.pth.tar \
 #    --multiprocessing  | tee output.txt
 #time mpirun -x LD_LIBRARY_PATH \
 #    -x OMP_NUM_THREADS \
@@ -88,15 +97,15 @@ echo "Nodefile List       " $PBS_NODEFILE
 #    --load_checkpoint 2  \
 #    --checkpoint_path resnet50_sweep/logs/imagenet_resnet50_pretrained_iter_BPc2r8extra_log/ckpt_epoch28.pth.tar \
 #    --multiprocessing  | tee output.txt
-time mpirun -x LD_LIBRARY_PATH \
-    -x OMP_NUM_THREADS \
-    -x PATH \
-    --map-by ppr:1:socket:pe=$num_core_per_socket --report-bindings \
-    --oversubscribe -n $num_proc \
-    python ImagenetResNet50Experiment.py --mode train --config_file resnet50_sweep/config_imagenet_resnet50_pretrained_iter_BPc2r8extra_quantize.yaml \
-    --load_checkpoint 1  \
-    --checkpoint_path resnet50_sweep/logs/imagenet_resnet50_pretrained_iter_BPc2r8extra_quantize_log/ckpt_epoch5.pth.tar \
-    --multiprocessing  | tee output.txt
+#time mpirun -x LD_LIBRARY_PATH \
+#    -x OMP_NUM_THREADS \
+#    -x PATH \
+#    --map-by ppr:1:socket:pe=$num_core_per_socket --report-bindings \
+#    --oversubscribe -n $num_proc \
+#    python ImagenetResNet50Experiment.py --mode train --config_file resnet50_sweep/config_imagenet_resnet50_pretrained_iter_BPc2r8extra_quantize.yaml \
+#    --load_checkpoint 1  \
+#    --checkpoint_path resnet50_sweep/logs/imagenet_resnet50_pretrained_iter_BPc2r8extra_quantize_log/ckpt_epoch5.pth.tar \
+#    --multiprocessing  | tee output.txt
 #time mpirun -x LD_LIBRARY_PATH \
 #      -x OMP_NUM_THREADS \
 #      -x PATH \
@@ -116,6 +125,21 @@ time mpirun -x LD_LIBRARY_PATH \
 #     -x HOROVOD_AUTOTUNE_LOG=autotune_log.csv \
 #     --map-by socket:PE=1 --report-bindings \
 #     --oversubscribe -n $num_proc python pytorch_mnist.py --no-cuda --epochs=100 --batch-size=1024 2>&1 | tee mnist_train_result.txt
- 
+#time mpirun -x LD_LIBRARY_PATH \
+#    -x OMP_NUM_THREADS \
+#    -x PATH \
+#    --map-by ppr:1:socket:pe=$num_core_per_socket --report-bindings \
+#    --oversubscribe -n $num_proc \
+#    python ImagenetVGG16Experiment.py --mode train --config_file vgg16_sweep/config_imagenet_vgg16_pretrained_oneshot_BPc2r4_p75.yaml \
+#    --load_checkpoint 3  \
+#    --multiprocessing  | tee output.txt
+#time mpirun -x LD_LIBRARY_PATH \
+#    -x OMP_NUM_THREADS \
+#    -x PATH \
+#    --map-by ppr:1:socket:pe=$num_core_per_socket --report-bindings \
+#    --oversubscribe -n $num_proc \
+#    python ImagenetVGG16Experiment.py --mode train --config_file vgg16_sweep/config_imagenet_vgg16_pretrained_quantize.yaml \
+#    --load_checkpoint 3  \
+#    --multiprocessing  | tee output.txt
 
 

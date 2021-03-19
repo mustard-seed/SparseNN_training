@@ -43,8 +43,8 @@ dataTrainDir: '/homes/jmusel/jmuse/imagenet/train'
 dataValDir: '/homes/jmusel/jmuse/imagenet/val'
 
 # Checkpoints
-checkpointSaveDir: 'vgg16_sweep/logs/imagenet_vgg16_dummy_log'
+checkpointSaveDir: 'vgg16_sweep/logs/dummy_vgg16_c2r4_log'
 checkpointSaveFileNameFormat: 'ckpt_epoch{}.pth.tar'
 
 # Log Dir
-logDir: 'vgg16_sweep/logs/imagenet_resnet50_vgg16_dummy_log'
+logDir: 'vgg16_sweep/logs/dummy_vgg16_c2r4_log'

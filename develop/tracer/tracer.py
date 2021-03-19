@@ -15,6 +15,7 @@ import custom_modules.custom_modules as cm
 import quantization.quantization as custom_quant
 # Custom pruning utility, used to extract cluster size, sparsity, prune range
 import pruning.pruning as cm_prune
+import custom_qat.modules as cqat_modules
 
 from typing import List, Union, Tuple
 from easydict import EasyDict as edict
@@ -661,8 +662,11 @@ class TraceDNN:
         # For the list that convolution layer-like types after qat is applied,
         # see
         # https://github.com/pytorch/pytorch/blob/20ac7362009dd8e0aca6e72fc9357773136a83b8/torch/quantization/quantization_mappings.py#L54
-        if isinstance(module, (nnqat.Linear, nnqat.Conv2d, nniqat.ConvBn2d, nniqat.ConvBnReLU2d, nniqat.ConvReLU2d, nniqat.LinearReLU)):
-            if isinstance(module, (nniqat.ConvReLU2d, nniqat.LinearReLU, nniqat.ConvBnReLU2d)):
+        if isinstance(module, (nnqat.Linear, nnqat.Conv2d, nniqat.ConvBn2d, nniqat.ConvBnReLU2d, nniqat.ConvReLU2d,
+                               nniqat.LinearReLU, cqat_modules.Linear, cqat_modules.Conv2d, cqat_modules.ConvBn2d,
+                               cqat_modules.ConvBnReLU2d, cqat_modules.ConvReLU2d, cqat_modules.LinearReLU)):
+            if isinstance(module, (nniqat.ConvReLU2d, nniqat.LinearReLU, nniqat.ConvBnReLU2d,
+                                   cqat_modules.ConvBnReLU2d, cqat_modules.ConvReLU2d, cqat_modules.LinearReLU)):
                 outputRelu = True
 
             # Determine padding and kernel size
@@ -670,7 +674,8 @@ class TraceDNN:
             kernelSize = inputWidths[0]
             kernelStride = kernelSize
             groups = 1
-            if isinstance(module, (nnqat.Conv2d, nniqat.ConvBn2d, nniqat.ConvBnReLU2d, nniqat.ConvReLU2d)):
+            if isinstance(module, (nnqat.Conv2d, nniqat.ConvBn2d, nniqat.ConvBnReLU2d, nniqat.ConvReLU2d,
+                                   cqat_modules.Conv2d, cqat_modules.ConvBn2d, cqat_modules.ConvBnReLU2d, cqat_modules.ConvReLU2d)):
                 # Extract the padding for convolution.
                 # Assume that the horizontal and vertical paddings are the same
                 padding = module.padding[0]
@@ -683,7 +688,8 @@ class TraceDNN:
             if module.bias is not None:
                 bias = module.bias
             # Perform batchnorm folding and update the quantization parameters if necessary
-            if self.foldBN and isinstance(module, (nniqat.ConvBn2d, nniqat.ConvBnReLU2d)):
+            if self.foldBN and isinstance(module, (nniqat.ConvBn2d, nniqat.ConvBnReLU2d,
+                                                   cqat_modules.ConvBn2d, cqat_modules.ConvBnReLU2d)):
                 """
                 Assumptions:
                     - This is a fused model
@@ -706,11 +712,15 @@ class TraceDNN:
             # weight_quantizer.forward(weight)
             weightPrecisionScale, _ = weight_quantizer.calculate_qparams()
             weightPrecisionScale = weightPrecisionScale.view(1)
-            weightFracBits = int(torch.round(torch.log2(1.0 / weightPrecisionScale)).view(1)[0].item())
+            weightFracBits = int(torch.ceil(torch.log2(1.0 / weightPrecisionScale)).view(1)[0].item())
             # Just use the quantizer to quantize the weights before exporting
             weight = weight_quantizer.forward(weight)
 
             hasBias = False if bias is None else True
+
+            # Quantize bias
+            if hasBias:
+                bias = cqat_modules.quantize_bias(module, bias)
 
             # Determine the SpW parameters
             flagFoundSpWInfo = False

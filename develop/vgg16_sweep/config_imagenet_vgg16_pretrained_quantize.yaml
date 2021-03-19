@@ -26,12 +26,12 @@ lossWeightL1Lambda: 0.00002
 lossWeightL2Lambda: 0.0001
 
 # Pruning and quantization parameters
-prune: True
+prune: False
 pruneCluster: 2
 pruneRangeInCluster: 4
 sparsityIncrement: 0.75
 pruneThreshold: 0.005
-quantize: False
+quantize: True
 numUpdateBNStatsEpochs: 2
 numUpdateQatObserverEpochs: 3
 
@@ -43,8 +43,8 @@ dataTrainDir: '/homes/jmusel/jmuse/imagenet/train'
 dataValDir: '/homes/jmusel/jmuse/imagenet/val'
 
 # Checkpoints
-checkpointSaveDir: 'vgg16_sweep/logs/imagenet_vgg16_pretrained_oneshot_BPc2r4_p75'
+checkpointSaveDir: 'vgg16_sweep/logs/imagenet_vgg16_pretrained_quantize'
 checkpointSaveFileNameFormat: 'ckpt_epoch{}.pth.tar'
 
 # Log Dir
-logDir: 'vgg16_sweep/logs/imagenet_vgg16_pretrained_oneshot_BPc2r4_p75'
+logDir: 'vgg16_sweep/logs/imagenet_vgg16_pretrained_quantize'

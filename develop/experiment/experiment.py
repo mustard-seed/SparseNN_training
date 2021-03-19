@@ -1,6 +1,8 @@
 import quantization.quantization as custom_quant
 import pruning.pruning as custom_prune
 from pruning.pruning import compute_group_lasso_mask, compute_balanced_pruning_mask
+import custom_qat.modules as cqat_modules
+import custom_qat.mapping as cqat_mapping
 from utils.meters import TimeMeter
 from tracer.tracer import TraceDNN as Tracer
 
@@ -329,7 +331,7 @@ class experimentBase(object):
     def quantize_model_method(cls, model, qatConfig):
         model.fuse_model()
         model.qconfig = qatConfig
-        model = torch.quantization.prepare_qat(model, inplace=True)
+        model = torch.quantization.prepare_qat(model, mapping=cqat_mapping.CUSTOM_QAT_MODULE_MAPPING, inplace=True)
         return model
 
     def initialize_optimizer (self):

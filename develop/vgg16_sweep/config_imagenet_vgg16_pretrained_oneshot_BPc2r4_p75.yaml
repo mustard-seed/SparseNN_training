@@ -3,7 +3,7 @@
 #See Section 4.2 of Deep Residual Learning for Image Classification for settings
 
 # Iterations, etc
-numEpochToTrain: 10
+numEpochToTrain: 6
 batchSizePerWorker: 32
 numThreadsPerWorker: 28
 numPhaseToTrain: 1
@@ -12,7 +12,7 @@ numPhaseToTrain: 1
 lrInitialBase: 0.0001
 lrPeakBase: 0.0001
 lrWarmupEpochs: 1
-lrStepSize: 5
+lrStepSize: 3
 lrReductionFactor: 0.1
 lrMomentum: 0.9
 lrMPAdjustmentWarmUpEpochs: 1
@@ -29,9 +29,9 @@ lossWeightL2Lambda: 0.0001
 prune: True
 pruneCluster: 2
 pruneRangeInCluster: 4
-sparsityIncrement: 0.25
+sparsityIncrement: 0.75
 pruneThreshold: 0.005
-quantize: True
+quantize: False
 numUpdateBNStatsEpochs: 2
 numUpdateQatObserverEpochs: 3
 
@@ -43,8 +43,8 @@ dataTrainDir: '/homes/jmusel/jmuse/imagenet/train'
 dataValDir: '/homes/jmusel/jmuse/imagenet/val'
 
 # Checkpoints
-checkpointSaveDir: 'vgg16_sweep/logs/imagenet_vgg16_dummy_log'
+checkpointSaveDir: 'vgg16_sweep/logs/imagenet_vgg16_pretrained_oneshot_BPc2r4_p75'
 checkpointSaveFileNameFormat: 'ckpt_epoch{}.pth.tar'
 
 # Log Dir
-logDir: 'vgg16_sweep/logs/imagenet_resnet50_vgg16_dummy_log'
+logDir: 'vgg16_sweep/logs/imagenet_vgg16_pretrained_oneshot_BPc2r4_p75'

@@ -397,7 +397,7 @@ class experimentImagenetResNet50(experimentBase):
                         # cap the sparsity-level of layers in residual blocks
                         # that see change in the number of channels to 50%
                         if layer.in_channels != layer.out_channels:
-                            sparsity = 0.5
+                            sparsity = min(0.5, sparsityTarget)
                         custom_pruning.applyBalancedPruning(
                             layer,
                             'weight',
