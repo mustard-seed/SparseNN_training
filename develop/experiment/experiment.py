@@ -260,20 +260,20 @@ class experimentBase(object):
         :return:
         """
 
-    def prepare_model(self) -> None:
-        """"
-        Quantize and prune the model and reset the optimizer accordingly if the experiment requires these but haven't been done
-        :return None
-        """
-        if (self.config.prune is True and self.experimentStatus.flagPruned is False) or \
-        (self.config.quantize is True and self.experimentStatus.flagFusedQuantized is False):
-            if self.config.prune is True and self.experimentStatus.flagPruned is False:
-                self.prune_network()
-                self.experimentStatus.flagPruned = True
-
-            if self.config.quantize is True and self.experimentStatus.flagFusedQuantized is False:
-                self.quantize_model()
-                self.experimentStatus.flagFusedQuantized = True
+    # def prepare_model(self) -> None:
+    #     """"
+    #     Quantize and prune the model and reset the optimizer accordingly if the experiment requires these but haven't been done
+    #     :return None
+    #     """
+    #     if (self.config.prune is True and self.experimentStatus.flagPruned is False) or \
+    #     (self.config.quantize is True and self.experimentStatus.flagFusedQuantized is False):
+    #         if self.config.prune is True and self.experimentStatus.flagPruned is False:
+    #             self.prune_network()
+    #             self.experimentStatus.flagPruned = True
+    #
+    #         if self.config.quantize is True and self.experimentStatus.flagFusedQuantized is False:
+    #             self.quantize_model()
+    #             self.experimentStatus.flagFusedQuantized = True
 
 
     def adjust_learning_rate(self, epoch, batchIdx, optimizer):
@@ -642,9 +642,9 @@ class experimentBase(object):
                     custom_prune.unPruneNetwork(self.model)
                     # end-if
                 targetSparsity = self.config.sparsityIncrement * (phase + 1)
-                self.prune_network(sparsityTarget=targetSparsity)
                 self.experimentStatus.flagPruned = True
                 self.experimentStatus.targetSparsity = targetSparsity
+                self.prune_network(sparsityTarget=targetSparsity)
 
             # reinitialize optimizer for each phase
             optimizer.load_state_dict(initialOptimizerState)
@@ -870,7 +870,7 @@ class experimentBase(object):
 
         if self.experimentStatus.flagPruned is False:
             # TODO: update the prune_network arugment to use the target sparsity
-            self.prune_network()
+            self.prune_network(sparsityTarget=self.experimentStatus.targetSparsity)
             self.experimentStatus.flagPruned = True
 
 

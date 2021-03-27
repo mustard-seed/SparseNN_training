@@ -373,7 +373,7 @@ class experimentImagenetResNet50(experimentBase):
 
 
     def prune_network(self, sparsityTarget: float=0.5) -> None:
-        self.prune_network_method(self.model, self.experimentStatus.targetSparsity, self.config)
+        self.prune_network_method(self.model, sparsityTarget, self.config)
 
     def prune_network_method(cls, model, sparsityTarget, config):
         # Don't prune the first layer
@@ -538,6 +538,8 @@ if __name__ == '__main__':
     elif args.mode == 'trace_model':
         if args.custom_sparsity is not None:
             experiment.experimentStatus.targetSparsity = args.custom_sparsity
+        if args.override_cluster_size is not None:
+            experiment.experimentStatus.pruneCluster = args.override_cluster_size
         experiment.trace_model(dirnameOverride=os.getcwd(), numMemoryRegions=3, modelName='resnet50_imagenet',
                                foldBN=True, outputLayerID=args.output_layer_id, custom_image_path=args.custom_image_path)
     elif args.mode == 'validate':

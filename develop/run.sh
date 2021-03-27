@@ -70,14 +70,23 @@ echo "Nodefile List       " $PBS_NODEFILE
 #    --load_checkpoint 3 \
 #    --multiprocessing | tee output.txt
 
+#time mpirun -x LD_LIBRARY_PATH \
+#    -x OMP_NUM_THREADS \
+#    -x PATH \
+#    --map-by ppr:1:socket:pe=$num_core_per_socket --report-bindings \
+#    --oversubscribe -n $num_proc \
+#    python ImagenetResNet50Experiment.py --mode train --config_file resnet50_sweep/config_imagenet_resnet50_pretrained_quantize.yaml \
+#    --load_checkpoint 1  \
+#    --checkpoint_path /homes/jmusel/SparseNN_training/develop/resnet50_sweep/logs/imagenet_resnet50_pretrained_quantize_bias_add_log/ckpt_epoch7.pth.tar \
+#    --multiprocessing  | tee output.txt
 time mpirun -x LD_LIBRARY_PATH \
     -x OMP_NUM_THREADS \
     -x PATH \
     --map-by ppr:1:socket:pe=$num_core_per_socket --report-bindings \
     --oversubscribe -n $num_proc \
-    python ImagenetResNet50Experiment.py --mode train --config_file resnet50_sweep/config_imagenet_resnet50_pretrained_quantize.yaml \
+    python ImagenetResNet50Experiment.py --mode train --config_file resnet50_sweep/config_imagenet_resnet50_pretrained_iter_BPc2r4.yaml \
     --load_checkpoint 2  \
-    --checkpoint_path experiment_logs/imagenet_resnet50_pretrained_log/ckpt_epoch4.pth.tar \
+    --checkpoint_path /homes/jmusel/jmuse/resnet50_sweep/imagenet_resnet50_pretrained_log/ckpt_epoch4.pth.tar \
     --multiprocessing  | tee output.txt
 #time mpirun -x LD_LIBRARY_PATH \
 #    -x OMP_NUM_THREADS \

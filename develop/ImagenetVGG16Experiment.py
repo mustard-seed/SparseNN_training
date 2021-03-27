@@ -218,7 +218,7 @@ class experimentImagenetVGG16(experimentBase):
 
 
     def prune_network(self, sparsityTarget: float=0.5) -> None:
-        self.prune_network_method(self.model, self.experimentStatus.targetSparsity, self.config)
+        self.prune_network_method(self.model, sparsityTarget, self.config)
 
     def prune_network_method(cls, model, sparsityTarget, config):
         # Don't prune the first layer

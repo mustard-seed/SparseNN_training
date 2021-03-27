@@ -3,7 +3,7 @@
 #See Section 4.2 of Deep Residual Learning for Image Classification for settings
 
 # Iterations, etc
-numEpochToTrain: 10
+numEpochToTrain: 14
 batchSizePerWorker: 32
 numThreadsPerWorker: 28
 numPhaseToTrain: 1
@@ -12,7 +12,7 @@ numPhaseToTrain: 1
 lrInitialBase: 0.0001
 lrPeakBase: 0.0001
 lrWarmupEpochs: 1
-lrStepSize: 5
+lrStepSize: 11
 lrReductionFactor: 0.1
 lrMomentum: 0.9
 lrMPAdjustmentWarmUpEpochs: 1
@@ -43,8 +43,8 @@ dataTrainDir: '/homes/jmusel/jmuse/imagenet/train'
 dataValDir: '/homes/jmusel/jmuse/imagenet/val'
 
 # Checkpoints
-checkpointSaveDir: 'resnet50_sweep/logs/imagenet_resnet50_pretrained_quantize_bias_log'
+checkpointSaveDir: 'resnet50_sweep/logs/imagenet_resnet50_pretrained_quantize_bias_add_log'
 checkpointSaveFileNameFormat: 'ckpt_epoch{}.pth.tar'
 
 # Log Dir
-logDir: 'resnet50_sweep/logs/imagenet_resnet50_pretrained_quantize_bias_log'
+logDir: 'resnet50_sweep/logs/imagenet_resnet50_pretrained_quantize_bias_add_log'

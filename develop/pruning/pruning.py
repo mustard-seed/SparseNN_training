@@ -210,7 +210,7 @@ def compute_balanced_pruning_mask(
             # Dim 1: Across clusters within the same range
             # Dim 2: Across values within the same cluster
             # TODO: Currently using L_inf. Change the norm order if necessary
-            norms = torch.norm(weightRowWithPaddingPartitioned, p=float('inf'), dim=2, keepdim=True).detach().numpy()
+            norms = torch.norm(weightRowWithPaddingPartitioned, p=float(1.0), dim=2, keepdim=True).detach().numpy()
             threshold = np.quantile(norms, q=sparsity, axis=1, interpolation='lower', keepdims=True)
             # print ("Row: {}, threshold: {}".format(row, threshold))
             # Generate the padded mask and flatten it
