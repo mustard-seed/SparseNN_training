@@ -4,7 +4,7 @@ channels:
   - defaults
 dependencies:
   - pip=20.0
-  - cpuonly
+  - cudatoolkit=10.1
   - python=3.6.10
   - pytorch=1.5.0
   - setuptools=46.4.0=py36_0
