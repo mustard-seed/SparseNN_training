@@ -1,2 +1,6 @@
-tensorboard==2.2.2
+horovod==0.19.*
+jupyterlab-nvdashboard==0.2.*
+jupyter-tensorboard==0.2.*
 easydict==1.9
+# make sure horovod is re-compiled if environment is re-built
+--no-binary=horovod
