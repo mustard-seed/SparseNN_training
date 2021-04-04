@@ -11,6 +11,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.intrinsic.qat
 import torch.utils.data.distributed
+import torch.backends.cudnn as cudnn
 import yaml
 from easydict import EasyDict as edict
 from abc import ABC, abstractmethod
@@ -22,6 +23,7 @@ import copy
 import csv
 import time
 import yaml
+import random
 
 import horovod.torch as hvd
 # Make sure to import the global the following globals
@@ -39,6 +41,13 @@ def hook_activation(module, input, output):
 def remove_hook_activation(forwardHookHandlesDict:dict):
     for name, handle in forwardHookHandlesDict.items():
         handle.remove()
+
+def set_random_seeds(random_seed=0):
+
+    torch.manual_seed(random_seed)
+    cudnn.deterministic = True
+    np.random.seed(random_seed)
+    random.seed(random_seed)
 
 
 # Global list for storing the weight tensors
@@ -252,13 +261,13 @@ class experimentBase(object):
             else:
                 self.extract_weight(m)
 
-    @abstractmethod
     def prune_network(self, sparsityTarget: float = 0.5) -> None:
         """
         Prunes the network according.
         Derived classes should specify which layers should pruned
         :return:
         """
+        self.prune_network_method(self.model, sparsityTarget, self.config)
 
     # def prepare_model(self) -> None:
     #     """"
@@ -329,6 +338,13 @@ class experimentBase(object):
 
     @classmethod
     def quantize_model_method(cls, model, qatConfig):
+        '''
+        Quantizes the model. After the operation, the quantized model is on CPU
+        :param model:
+        :param qatConfig:
+        :return:
+        '''
+        model.cpu()
         model.fuse_model()
         model.qconfig = qatConfig
         model = torch.quantization.prepare_qat(model, mapping=cqat_mapping.CUSTOM_QAT_MODULE_MAPPING, inplace=True)
@@ -376,6 +392,7 @@ class experimentBase(object):
     def restore_experiment_from_checkpoint(self, checkpoint, loadModelOnly=False):
         """
         Restores an experiment stats, optimizer, and model from checkpoint
+        Experiment is restored to CPU!
         When restoring a model, look for the status flag 'quantized'
         If the model has been quantized, but the experiment doesn't require quantization,
         then error out.
@@ -383,15 +400,16 @@ class experimentBase(object):
         :return: None
         """
 
+        map_device = torch.device('cpu')
         #Broadcast the experiment status to all workers
         if self.multiprocessing is True:
             if hvd.rank() == 0:
-                state_dict = torch.load(checkpoint)
+                state_dict = torch.load(checkpoint, map_location=map_device)
             else:
                 state_dict = None
             state_dict = hvd.broadcast_object(state_dict, root_rank=0, name='state_dict')
         else:
-            state_dict = torch.load(checkpoint)
+            state_dict = torch.load(checkpoint, map_location=map_device)
 
         experimentStatus = state_dict['experimentStatus']
         #self.experimentStatus = experimentStatus
@@ -433,7 +451,14 @@ class experimentBase(object):
         self.restore_model_from_state_dict(state_dict['model'])
 
     def initialize_from_pre_trained_model(self):
-        # Overriden by concrete classes
+        if self.multiprocessing is True:
+            if hvd.rank() == 0:
+                self.initialize_from_pre_trained_model_helper()
+            hvd.broadcast_parameters(self.model.state_dict(), root_rank=0)
+        else:
+            self.initialize_from_pre_trained_model_helper()
+
+    def initialize_from_pre_trained_model_helper(self):
         pass
 
     def save_experiment_to_checkpoint(self, optimizer, filePath):
@@ -469,7 +494,7 @@ class experimentBase(object):
             #     self.experimentStatus.flagPruned = True
             #     self.prune_network()
 
-    def evaluate(self, data, target, isTrain=False) -> torch.Tensor:
+    def evaluate(self, data: torch.Tensor, target: torch.Tensor, device, isTrain=False) -> torch.Tensor:
         """
         Evaluate the model on one batch of data.
         Calculates the losses, and update the repsective meter depends on the isTrain flag
@@ -485,6 +510,11 @@ class experimentBase(object):
         globalActivationDict.clear()
         globalWeightDict.clear()
 
+        # https://discuss.pytorch.org/t/should-we-set-non-blocking-to-true/38234/4
+        # Assuming data is pinned.
+        data = data.to(device, non_blocking=True)
+        target = target.to(device, non_blocking=True)
+
         batchSize = target.size()[0]
         output = self.model(data)
 
@@ -492,32 +522,44 @@ class experimentBase(object):
         predictionLoss = self.evaluate_loss(output, target)
 
         # If pruning has not been enacted, obtain weight Lasso and L2 regularization loss
-        weightGroupLassoLoss = torch.tensor(0.0)
-        weightL2Loss = torch.tensor(0.0)
+        weightGroupLassoLoss = torch.tensor(0.0, device=device)
+        weightL2Loss = torch.tensor(0.0, device=device)
 
         self.extract_weight(self.model)
         if self.config.enableLossWeightL1:
             for key, tensor in globalWeightDict.items():
-                weightGroupLassoLoss.add_(custom_prune.calculateChannelGroupLasso(tensor,
-                                                                                  clusterSize=self.config.pruneCluster))
-            weightGroupLassoLoss.mul_(self.config.lossWeightL1Lambda)
+                if weightGroupLassoLoss is None:
+                    weightGroupLassoLoss = custom_prune.calculateChannelGroupLasso(tensor,
+                                            clusterSize=self.config.pruneCluster)
+                else:
+                    weightGroupLassoLoss = weightGroupLassoLoss \
+                                           + custom_prune.calculateChannelGroupLasso(tensor,
+                                                    clusterSize=self.config.pruneCluster)
+            weightGroupLassoLoss = weightGroupLassoLoss * self.config.lossWeightL1Lambda
 
         if self.config.enableLossWeightL2:
             for key, tensor in globalWeightDict.items():
-                weightL2Loss.add_(tensor.pow(2.0).sum())
-            weightL2Loss.mul_(self.config.lossWeightL2Lambda)
+                if weightL2Loss is None:
+                    weightL2Loss = tensor.pow(2.0).sum()
+                else:
+                    weightL2Loss = weightL2Loss + tensor.pow(2.0).sum()
 
-        activationGroupLassoLoss = torch.tensor(0.0)
+            weightL2Loss = weightL2Loss * self.config.lossWeightL2Lambda
+
+        activationGroupLassoLoss = torch.tensor(0.0, device=device)
 
         if self.config.enableLossActivation:
             for _, tensor in globalActivationDict.items():
-                activationGroupLassoLoss.add_(custom_prune.calculateChannelGroupLasso(tensor,
-                                                                                      clusterSize=self.config.pruneCluster))
-            activationGroupLassoLoss.div_(batchSize)
-            activationGroupLassoLoss.mul_(self.config.lossActivationLambda)
-
-        totalLoss = predictionLoss + \
-                    weightGroupLassoLoss + weightL2Loss + activationGroupLassoLoss
+                if activationGroupLassoLoss is None:
+                    activationGroupLassoLoss = custom_prune.calculateChannelGroupLasso(tensor,
+                                                    clusterSize=self.config.pruneCluster)
+                else:
+                    activationGroupLassoLoss = activationGroupLassoLoss + \
+                                               custom_prune.calculateChannelGroupLasso(tensor,
+                                                    clusterSize=self.config.pruneCluster)
+            activationGroupLassoLoss = activationGroupLassoLoss / batchSize
+            activationGroupLassoLoss = activationGroupLassoLoss * self.config.lossActivationLambda
+        totalLoss = predictionLoss + weightL2Loss + weightGroupLassoLoss + activationGroupLassoLoss
 
         meter = self.trainMeter if isTrain is True else self.valMeter
         meter.update(
@@ -533,7 +575,7 @@ class experimentBase(object):
         return totalLoss
 
 
-    def train_one_epoch(self, optimizer, epoch: int) -> None:
+    def train_one_epoch(self, optimizer, device, epoch: int) -> None:
         """
         Train the model for one epoch
         :param optimizer optimizer object
@@ -559,7 +601,7 @@ class experimentBase(object):
             dataLoadingTime = (time.time() - end)
             self.adjust_learning_rate(epoch, batchIdx, optimizer)
             optimizer.zero_grad()
-            totalLoss = self.evaluate(data, target, isTrain=True)
+            totalLoss = self.evaluate(data, target, device, isTrain=True)
             # print('totalLoss: ', totalLoss)
             totalLoss.backward()
             optimizer.step()
@@ -586,7 +628,13 @@ class experimentBase(object):
                         dtime=dataLoadingTime,
                         quantized=self.experimentStatus.flagFusedQuantized,
                         pruned=self.experimentStatus.flagPruned,
-                        sparsity=self.experimentStatus.targetSparsity))
+                        sparsity=self.experimentStatus.targetSparsity), flush=True)
+
+                    if torch.cuda.is_available():
+                        print('Peak GPU memory allocation: {peak}\t Current GPU memory allocation: {curr}'.format(
+                            peak=torch.cuda.max_memory_allocated(),
+                            curr=torch.cuda.memory_allocated()
+                        ), flush=True)
 
                     # Log the accuracy, and various losses, and timing for the last ten iter
                     epochTrained = \
@@ -607,13 +655,13 @@ class experimentBase(object):
         remove_hook_activation(forwardHookHandlesDict=fowardHookHandles)
 
 
-    def train(self):
+    def train(self, device):
         """
         Train a model for multiple epoch and evaluate on the validation set after every epoch
         :return: None
         """
         if self.multiprocessing is False or (self.multiprocessing is True and hvd.rank() == 0):
-            print ("Start training")
+            print ("Start training", flush=True)
 
         # Quantize the model if necessary
         if (self.config.quantize is True) and \
@@ -632,6 +680,9 @@ class experimentBase(object):
         startEpoch = self.experimentStatus.numEpochTrained
         startPhase = self.experimentStatus.numPhaseTrained
 
+        # Need to move the model to the device before constructing the optimizer
+        # See https://discuss.pytorch.org/t/effect-of-calling-model-cuda-after-constructing-an-optimizer/15165
+        self.model.to(device)
         optimizer = self.initialize_optimizer()
         initialOptimizerState = optimizer.state_dict()
         for phase in range(startPhase, self.config.numPhaseToTrain):
@@ -645,11 +696,13 @@ class experimentBase(object):
                 self.experimentStatus.flagPruned = True
                 self.experimentStatus.targetSparsity = targetSparsity
                 self.prune_network(sparsityTarget=targetSparsity)
+                # Make sure to place the model back to thetraing device
+                self.model.to(device)
 
             # reinitialize optimizer for each phase
             optimizer.load_state_dict(initialOptimizerState)
 
-            #I f loading from checkpoint, then reinitialze the optimizer
+            #If loading from checkpoint, then reinitialze the optimizer
             # from the checkpoint
             # Problem: The following lines cause problem when reloading the full experiments, at least when training ResNet-50
             if startEpoch != 0:
@@ -673,8 +726,8 @@ class experimentBase(object):
                     else:
                         self.model.apply(torch.nn.intrinsic.qat.update_bn_stats)
 
-                self.train_one_epoch(optimizer, epoch)
-                self.validate(epoch)
+                self.train_one_epoch(optimizer=optimizer, device=device, epoch=epoch)
+                self.validate(epoch, device)
 
                 # Update epoch and phase counters
                 recordEpoch = epoch + 1
@@ -690,7 +743,7 @@ class experimentBase(object):
             startEpoch = 0
             #end-for over phase
 
-    def validate(self, epoch: int):
+    def validate(self, epoch: int, device):
         """
         Validate the model on the validation set
         :return: None
@@ -700,13 +753,13 @@ class experimentBase(object):
 
         self.valMeter.reset()
         self.model.eval()
-
+        self.model.to(device)
         with torch.no_grad():
             for batchIdx, (data, target) in enumerate(self.valDataLoader):
-                self.evaluate(data, target, isTrain=False)
+                self.evaluate(data, target, device, isTrain=False)
                 if int(batchIdx + 1) % 10 == 0:
                     if self.multiprocessing is False or (self.multiprocessing is True and hvd.rank() == 0):
-                        print('Validating: {0}/{1}\n'.format(batchIdx, len(self.valDataLoader)))
+                        print('Validating: {0}/{1}'.format(batchIdx, len(self.valDataLoader)), flush=True)
                 # End of one validation iteration in the epoch
             # End of one validation epoch
 
@@ -723,7 +776,7 @@ class experimentBase(object):
                 top1=self.valMeter.aggregateAccuracyTop1.avg,
                 quantized=self.experimentStatus.flagFusedQuantized,
                 pruned=self.experimentStatus.flagPruned,
-                sparsity=self.experimentStatus.targetSparsity))
+                sparsity=self.experimentStatus.targetSparsity), flush=True)
 
         remove_hook_activation(forwardHookHandlesDict=fowardHookHandles)
 
@@ -852,7 +905,7 @@ class experimentBase(object):
                 writer.writerow(rowDict)
 
     def print_model(self):
-        print(self.model)
+        print(self.model, flush=True)
 
     def trace_model(self, dirnameOverride=None, numMemoryRegions: int=3, modelName: str='model', foldBN: bool=True,
                     outputLayerID: int=-1,

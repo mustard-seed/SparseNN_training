@@ -3,14 +3,14 @@ import horovod.torch as hvd
 from torch.utils.tensorboard import SummaryWriter
 
 
-def accuracy(output, target, topk=(1,)):
+def accuracy(output: torch.Tensor, target: torch.Tensor, topk=(1,)):
     """Computes the accuracy over the k top predictions for the specified values of k"""
     with torch.no_grad():
         maxk = max(topk)
         batch_size = target.size(0)
 
-        _, pred = output.topk(maxk, 1, True, True)
-        pred = pred.t()
+        _, pred = output.detach().topk(maxk, 1, True, True)
+        pred = pred.detach().t()
         correct = pred.eq(target.view(1, -1).expand_as(pred))
 
         res = []
@@ -37,7 +37,7 @@ class AverageMeter(object):
     def update(self, val):
         if self.mp is True:
             val = hvd.allreduce(val.detach().cpu(), name=self.name)
-        self.val = val
+        self.val = val.detach()
         self.sum += val
         self.count += 1
 

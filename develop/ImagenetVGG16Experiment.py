@@ -176,14 +176,6 @@ class experimentImagenetVGG16(experimentBase):
 
         print('Finished loading parameters from the pre-trained VGG-16 from TorchVision')
 
-    def initialize_from_pre_trained_model(self) -> None:
-        if self.multiprocessing is True:
-            if hvd.rank() == 0:
-                self.initialize_from_pre_trained_model_helper()
-            hvd.broadcast_parameters(self.model.state_dict(), root_rank=0)
-        else:
-            self.initialize_from_pre_trained_model_helper()
-
     def evaluate_loss(self, output: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         return F.cross_entropy(input=output, target=target)
 

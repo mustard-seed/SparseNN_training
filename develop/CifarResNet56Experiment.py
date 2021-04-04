@@ -3,12 +3,15 @@ import torch.nn.functional as F
 import torch.nn as nn
 from torch.quantization import QuantStub, DeQuantStub
 import torch.optim as optim
-from torchvision import datasets, transforms
+from torchvision import models, datasets, transforms
 import torch.utils.data.distributed as distributed
 import torch.multiprocessing as mp
+import torch.backends.cudnn as cudnn
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
+from PIL import Image
 import numpy as np
+import yaml
 
 
 import argparse
@@ -21,6 +24,7 @@ import pruning.pruning as custom_pruning
 from custom_modules.resnet import ResNet, cifar_resnet56, BasicBlock, BottleneckBlock, conv1x1BN, conv3x3BN
 from utils.meters import ClassificationMeter, TimeMeter
 from experiment.experiment import experimentBase, globalActivationDict, globalWeightDict, hook_activation
+from tracer.tracer import TraceDNN as Tracer
 
 import horovod.torch as hvd
 
@@ -46,7 +50,7 @@ class experimentCifar10ResNet56(experimentBase):
             transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                  std=[0.229, 0.224, 0.225])
         ])
-        self.trainDataSet = datasets.CIFAR10(datasetDir, train=True, download=False,
+        self.trainDataSet = datasets.CIFAR10(datasetDir, train=True, download=True,
                                            transform=train_transform)
         self.trainDataSampler = distributed.DistributedSampler(
             self.trainDataSet, num_replicas=hvd.size(), rank=hvd.rank()
@@ -57,10 +61,11 @@ class experimentCifar10ResNet56(experimentBase):
             self.trainDataSet,
             batch_size=self.config.batchSizePerWorker,
             sampler=self.trainDataSampler,
-            shuffle=True if self.trainDataSampler is None else False
+            shuffle=True if self.trainDataSampler is None else False,
+            pin_memory=True if torch.cuda.is_available() else False
             #,**dataKwargs
         )
-        self.valDataSet = datasets.CIFAR10(datasetDir, train=False, download=False,
+        self.valDataSet = datasets.CIFAR10(datasetDir, train=False, download=True,
                                            transform=val_transform)
 
         self.valDataSampler = distributed.DistributedSampler(
@@ -72,7 +77,8 @@ class experimentCifar10ResNet56(experimentBase):
             self.valDataSet,
             batch_size=self.config.batchSizePerWorker,
             sampler=self.valDataSampler,
-            shuffle=True if self.valDataSampler is None else False
+            shuffle=True if self.valDataSampler is None else False,
+            pin_memory=True if torch.cuda.is_available() else False
             #,**dataKwargs
         )
 
@@ -101,6 +107,14 @@ class experimentCifar10ResNet56(experimentBase):
 
         # End of __init__
 
+    def initialize_from_pre_trained_model_helper(self) -> None:
+        """
+        Download the pre-trained ResNet-56 CIFAR model from Torch Vision,
+        and use the pre-trained parameters to initialize the custom ResNet-56 model
+        """
+        print('ResNet-56 is not available from TorchVision. Need to train from scratch.')
+        pass
+
     def evaluate_loss(self, output: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         return F.cross_entropy(input=output, target=target)
 
@@ -111,26 +125,8 @@ class experimentCifar10ResNet56(experimentBase):
         :param prefix: Not used
         :return: Handles to the activation interception hooks
         """
-        pruneDict = {
-            'inputConvBNReLU': self.model.inputConvBNReLU
-        }
-        # Add the residual blocks to the dictionary
-        # Don't prune the input tensor of the elementwise add operation
-        blockId = 0
-        for m in self.model.modules():
-            if isinstance(m, BasicBlock):
-                name = 'block_{}_layer0'.format(blockId)
-                pruneDict[name] = m.convBN1
-                name = 'block_{}_out'.format(blockId)
-                pruneDict[name] = m
-                blockId +=1
-        # Don't prune the output of the final fc layer
-        forwardHookHandlesDict = {}
-        for name, m in pruneDict.items():
-            handle = m.register_forward_hook(hook_activation)
-            forwardHookHandlesDict[name] = handle
-
-        return forwardHookHandlesDict
+        myDict = {}
+        return myDict
 
     def extract_weight(self, module: torch.nn.Module) -> None:
         """
@@ -303,46 +299,130 @@ class experimentCifar10ResNet56(experimentBase):
         return activationSparsityList, weightSparsityList, layerNameList
         # End of evaluate sparsity
 
-
-    def prune_network(self) -> None:
-        custom_pruning.applyClusterPruning(
-            self.model.inputConvBNReLU[0],
-            'weight',
-            clusterSize=self.config.pruneCluster,
-            threshold=self.config.pruneThreshold
-        )
-
-        for m in self.model.modules():
+    def prune_network_method(cls, model, sparsityTarget, config):
+        # Prune the residual blocks
+        for m in model.modules():
             if isinstance(m, BasicBlock):
-                custom_pruning.applyClusterPruning(m.convBN1[0],
-                                                   "weight",
-                                                   clusterSize=self.config.pruneCluster,
-                                                   threshold=self.config.pruneThreshold)
-                custom_pruning.applyClusterPruning(m.convBN2[0],
-                                                   "weight",
-                                                   clusterSize=self.config.pruneCluster,
-                                                   threshold=self.config.pruneThreshold)
-                if isinstance(m.shortcut, ConvBN):
-                    custom_pruning.applyClusterPruning(m.shortcut[0],
-                                                       "weight",
-                                                       clusterSize=self.config.pruneCluster,
-                                                       threshold=self.config.pruneThreshold)
+                for layer in [m.convBN1[0], m.convBN2[0], m.shortcut]:
+                    if not isinstance(layer, nn.Identity):
+                        # Special case for short-cut
+                        if isinstance(layer, (ConvBN, ConvBNReLU)):
+                            layer = layer[0]
+                        sparsity = sparsityTarget
+                        # cap the sparsity-level of layers in residual blocks
+                        # that see change in the number of channels to 50%
+                        if layer.in_channels != layer.out_channels:
+                            sparsity = min(0.5, sparsityTarget)
+                        custom_pruning.applyBalancedPruning(
+                            layer,
+                            'weight',
+                            clusterSize=config.pruneCluster,
+                            pruneRangeInCluster=config.pruneRangeInCluster,
+                            sparsity=sparsity
+                        )
+
+        # Prune the FC layer at the end
+        custom_pruning.applyBalancedPruning(
+            model.fc,
+            'weight',
+            clusterSize=config.pruneCluster,
+            pruneRangeInCluster=config.pruneRangeInCluster,
+            sparsity=sparsityTarget
+        )
+        return model
+
+    def trace_model(self, dirnameOverride=None, numMemoryRegions: int = 3, modelName: str = 'model',
+                    foldBN: bool = True, outputLayerID: int = -1, custom_image_path=None) -> None:
+        """
+        Trace the model after pruning and quantization, and save the trace and parameters
+        :return: None
+        """
+        dirname = self.config.checkpointSaveDir if dirnameOverride is None else dirnameOverride
+        # Prune and quantize the model
+        self.eval_prep()
+
+        # Deepcopy doesn't work, do the following instead:
+        # See https://discuss.pytorch.org/t/deep-copying-pytorch-modules/13514/2
+        module = cifar_resnet56()
+        module = self.quantize_model_method(module, self.qatConfig)
+        module = self.prune_network_method(module, self.experimentStatus.targetSparsity, self.config)
+        module.load_state_dict(self.model.state_dict())
+        with torch.no_grad():
+            # Hack
+            # module.inputConvBNReLU._modules['0'].running_mean.zero_()
+            # module.inputConvBNReLU._modules['0'].beta.zero_()
+            # end of hack
+            module.eval()
+            trace = Tracer(module, _foldBN=foldBN, _defaultPruneCluster=self.config.pruneCluster,
+                           _defaultPruneRangeInCluster=self.config.pruneRangeInCluster)
+            """
+            Run inference and save a reference input-output pair
+            """
+            blobPath = os.path.join(dirname, modelName + '_inout.yaml')
+            blobFile = open(blobPath, 'w')
+            blobDict: dict = {}
+            output = None
+            sampleIn = None
+            if custom_image_path is None:
+                for (data, target) in self.valDataLoader:
+                    sampleIn = data[0].unsqueeze(0)
+                    print(sampleIn.shape)
+                    output = trace.getOutput(sampleIn, outputLayerID)
+                    break
+            else:
+                print('Using custom image for inference tracing: {}'.format(custom_image_path))
+                img = Image.open(custom_image_path)
+                img = img.convert('RGB')
+                # val_transform = transforms.Compose([
+                #     transforms.Resize(256),
+                #     transforms.CenterCrop(224),
+                #     transforms.ToTensor(),
+                #     transforms.Normalize(mean=[0.000, 0.000, 0.000],
+                #                          std=[0.229, 0.224, 0.225])
+                # ])
+                sampleIn = self.val_transform(img)
+                sampleIn = sampleIn.unsqueeze(0)
+                print(sampleIn.shape)
+                output = trace.getOutput(sampleIn, outputLayerID)
+            inputArray = sampleIn.view(sampleIn.numel()).tolist()
+            blobDict['input'] = inputArray
+
+            outputArray = output.view(output.numel()).tolist()
+            blobDict['output'] = outputArray
+            # We want list to be dumped as in-line format, hence the choice of the default_flow_style
+            # See https://stackoverflow.com/questions/56937691/making-yaml-ruamel-yaml-always-dump-lists-inline
+            yaml.dump(blobDict, blobFile, default_flow_style=None)
+
+            trace.traceModel(sampleIn)
+
+            trace.annotate(numMemRegions=numMemoryRegions)
+            trace.dump(dirname, fileNameBase=modelName)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="CIFAR10_ResNet56 experiment")
-    parser.add_argument('--mode', type=str, choices=['train', 'evaluate_sparsity', 'print_model', 'trace_model'],
+    parser.add_argument('--mode', type=str,
+                        choices=['train', 'evaluate_sparsity', 'print_model', 'trace_model', 'validate'],
                         default='train',
-                        help='Mode. Valid choices are train, evaluate_sparsity, and print model')
+                        help='Mode. Valid choices are train, evaluate_sparsity, print model, trace_model, and validate')
     parser.add_argument('--config_file', type=str, required=True,
                         help='Path to the experiment configuration file. Required')
     parser.add_argument('--load_checkpoint', type=int, choices=[0, 1, 2], default=0,
-                        help='Load experiment from checkpoint. Default: 0. 0: start from scratch; 1: load full experiment; 2: load model only')
+                        help='Load experiment from checkpoint. '
+                             'Default: 0. 0: start from scratch; '
+                             '1: load full experiment; '
+                             '2: load model only')
     parser.add_argument('--multiprocessing', action='store_true',
                         help='Enable multiprocessing (using Horovod as backend). Default: False')
     parser.add_argument('--checkpoint_path', type=str,
                         help='Path to the checkpoint to be loaded. Required if --load_checkpoint is set as 1 or 2')
     parser.add_argument('--override_cluster_size', type=int,
-                       help='Override the cluster size in the experiment config when performing sparsity evaluation')
+                        help='Override the cluster size in the experiment config when performing sparsity evaluation')
+    parser.add_argument('--output_layer_id', type=int, default=-1,
+                        help='ID of the layer to intercept the output during model tracing. Default: -1')
+    parser.add_argument('--custom_image_path', type=str, default=None,
+                        help='Path to the image to run inference on during tracing')
+    parser.add_argument('--custom_sparsity', type=float, default=None,
+                        help='Override the sparsity target with a custom value')
 
 
     args = parser.parse_args()
@@ -357,15 +437,35 @@ if __name__ == '__main__':
                                                       loadModelOnly=loadModelOnly)
 
     if args.mode == 'train':
-        experiment.train()
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        cudnn.benchmark = True
+        experiment.train(device)
         # Copy the config file into the log directory
         logPath = experiment.config.checkpointSaveDir
         configFileName = os.path.basename(args.config_file)
         newConfigFilePath = os.path.join(logPath, configFileName)
         shutil.copy(args.config_file, newConfigFilePath)
     elif args.mode == 'evaluate_sparsity':
-        experiment.save_sparsity_stats(args.override_cluster_size)
+        if args.custom_sparsity is not None:
+            experiment.experimentStatus.targetSparsity = args.custom_sparsity
+        experiment.save_sparsity_stats(args.override_cluster_size, numBatches=20)
     elif args.mode == 'print_model':
         experiment.print_model()
     elif args.mode == 'trace_model':
-        experiment.trace_model(dirnameOverride=os.getcwd(), numMemoryRegions=3, modelName='resnet56_cifar10', foldBN=True)
+        if args.custom_sparsity is not None:
+            experiment.experimentStatus.targetSparsity = args.custom_sparsity
+        if args.override_cluster_size is not None:
+            experiment.experimentStatus.pruneCluster = args.override_cluster_size
+        experiment.trace_model(dirnameOverride=os.getcwd(), numMemoryRegions=3, modelName='resnet50_imagenet',
+                               foldBN=True, outputLayerID=args.output_layer_id,
+                               custom_image_path=args.custom_image_path)
+    elif args.mode == 'validate':
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        cudnn.benchmark = True
+        if args.custom_sparsity is not None:
+            experiment.experimentStatus.targetSparsity = args.custom_sparsity
+        if experiment.multiprocessing is False or (experiment.multiprocessing is True and hvd.rank() == 0):
+            print('Running inference on the entire validation set. Target sparsity = {level:.4f}'
+                  .format(level=experiment.experimentStatus.targetSparsity))
+        experiment.eval_prep()
+        experiment.validate(epoch=0, device=device)

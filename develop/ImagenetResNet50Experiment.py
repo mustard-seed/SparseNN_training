@@ -171,14 +171,6 @@ class experimentImagenetResNet50(experimentBase):
 
         print('Finished loading parameters from the pre-trained ResNet-50 from TorchVision')
 
-    def initialize_from_pre_trained_model(self) -> None:
-        if self.multiprocessing is True:
-            if hvd.rank() == 0:
-                self.initialize_from_pre_trained_model_helper()
-            hvd.broadcast_parameters(self.model.state_dict(), root_rank=0)
-        else:
-            self.initialize_from_pre_trained_model_helper()
-
     def evaluate_loss(self, output: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
         return F.cross_entropy(input=output, target=target)
 
@@ -371,20 +363,7 @@ class experimentImagenetResNet50(experimentBase):
         return activationSparsityList, weightSparsityList, layerNameList
         # End of evaluate sparsity
 
-
-    def prune_network(self, sparsityTarget: float=0.5) -> None:
-        self.prune_network_method(self.model, sparsityTarget, self.config)
-
     def prune_network_method(cls, model, sparsityTarget, config):
-        # Don't prune the first layer
-        # custom_pruning.applyBalancedPruning(
-        #     self.model.inputConvBNReLU[0],
-        #     'weight',
-        #     clusterSize=self.config.pruneCluster,
-        #     pruneRangeInCluster=self.config.pruneRangeInCluster
-        #     sparsity=0.0
-        # )
-
         # Prune the residual blocks
         for m in model.modules():
             if isinstance(m, BottleneckBlock):
