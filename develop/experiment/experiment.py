@@ -347,7 +347,8 @@ class experimentBase(object):
         model.cpu()
         model.fuse_model()
         model.qconfig = qatConfig
-        model = torch.quantization.prepare_qat(model, mapping=cqat_mapping.CUSTOM_QAT_MODULE_MAPPING, inplace=True)
+        # model = torch.quantization.prepare_qat(model, mapping=cqat_mapping.CUSTOM_QAT_MODULE_MAPPING, inplace=True)
+        model = torch.quantization.prepare_qat(model, inplace=True)
         return model
 
     def initialize_optimizer (self):
@@ -666,6 +667,7 @@ class experimentBase(object):
         # Quantize the model if necessary
         if (self.config.quantize is True) and \
             (self.experimentStatus.flagFusedQuantized is False):
+            self.model.train()
             self.quantize_model()
             self.experimentStatus.flagFusedQuantized = True
 

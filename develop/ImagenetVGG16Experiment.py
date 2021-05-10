@@ -1,4 +1,5 @@
 import torch
+import torch.backends.cudnn as cudnn
 import torch.nn.functional as F
 import torch.nn as nn
 from torch.quantization import QuantStub, DeQuantStub
@@ -119,7 +120,7 @@ class experimentImagenetVGG16(experimentBase):
         and use the pre-trained parameters to initialize our custom ResNet-50 model
         :return: None
         '''
-        print('Downloading the pretrained ResNet-50 from TorchVision')
+        print('Downloading the pretrained VGG-16 from TorchVision')
         pretrainedModel = models.vgg16(pretrained=True, progress=True)
 
         '''
@@ -220,9 +221,9 @@ class experimentImagenetVGG16(experimentBase):
             if isinstance(m, ConvReLU):
                 # Hard-code the input layer's characteristics
                 if m[0].in_channels == 3:
-                    continue
+                    sparsity = 0.0
                 elif m[0].in_channels != m[0].out_channels:
-                    sparsity = 0.5
+                    sparsity = min(0.5, sparsityTarget)
                 custom_pruning.applyBalancedPruning(
                     m[0],
                     'weight',
@@ -320,11 +321,13 @@ if __name__ == '__main__':
                              'Default: 0. 0: start from scratch; '
                              '1: load full experiment; '
                              '2: load model only'
-                             '3: initialize model from pre-trained ResNet-50 from Torch Vision')
+                             '3: initialize model from pre-trained VGG-16 from Torch Vision')
     parser.add_argument('--multiprocessing', action='store_true',
                         help='Enable multiprocessing (using Horovod as backend). Default: False')
     parser.add_argument('--checkpoint_path', type=str,
                         help='Path to the checkpoint to be loaded. Required if --load_checkpoint is set as 1 or 2')
+    parser.add_argument('--override_cluster_size', type=int,
+                        help='Override the cluster size in the experiment config when performing sparsity evaluation')
     parser.add_argument('--output_layer_id', type=int, default=-1,
                         help='ID of the layer to intercept the output during model tracing. Default: -1')
     parser.add_argument('--custom_image_path', type=str, default=None, help='Path to the image to run inference on during tracing')
@@ -345,7 +348,9 @@ if __name__ == '__main__':
         experiment.initialize_from_pre_trained_model()
 
     if args.mode == 'train':
-        experiment.train()
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        cudnn.benchmark = True
+        experiment.train(device=device)
         # Copy the config file into the log directory
         logPath = experiment.config.checkpointSaveDir
         configFileName = os.path.basename(args.config_file)
@@ -356,6 +361,9 @@ if __name__ == '__main__':
     elif args.mode == 'trace_model':
         if args.custom_sparsity is not None:
             experiment.experimentStatus.targetSparsity = args.custom_sparsity
+        if args.override_cluster_size is not None:
+            experiment.experimentStatus.pruneCluster = args.override_cluster_size
+            experiment.config.pruneCluster = args.override_cluster_size
         experiment.trace_model(dirnameOverride=os.getcwd(), numMemoryRegions=3, modelName='vgg16_imagenet',
                                foldBN=True, outputLayerID=args.output_layer_id, custom_image_path=args.custom_image_path)
     elif args.mode == 'validate':
@@ -365,4 +373,6 @@ if __name__ == '__main__':
             print('Running inference on the entire validation set. Target sparsity = {level:.4f}'
                   .format(level=experiment.experimentStatus.targetSparsity))
         experiment.eval_prep()
-        experiment.validate(epoch=0)
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        cudnn.benchmark = True
+        experiment.validate(epoch=0, device=device)

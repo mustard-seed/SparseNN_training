@@ -1,4 +1,5 @@
 import torch
+import torch.backends.cudnn as cudnn
 import torch.nn.functional as F
 import torch.nn as nn
 from torch.quantization import QuantStub, DeQuantStub
@@ -24,6 +25,7 @@ from custom_modules.resnet import ResNet, imagenet_resnet50, BasicBlock, Bottlen
 from utils.meters import ClassificationMeter, TimeMeter
 from experiment.experiment import experimentBase, globalActivationDict, globalWeightDict, hook_activation
 from tracer.tracer import TraceDNN as Tracer
+from lmdb_loader.folder2lmdb import ImageFolderLMDB
 
 import horovod.torch as hvd
 
@@ -65,15 +67,21 @@ class experimentImagenetResNet50(experimentBase):
             transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                  std=[0.229, 0.224, 0.225])
         ])
-        self.trainDataSet = datasets.ImageFolder(datasetTrainDir,
-                                           transform=self.train_transform)
+        if multiprocessing is False:
+            self.trainDataSet = datasets.ImageFolder(datasetTrainDir,
+                                               transform=self.train_transform)
+            # print("Using ImageFolderLMDB")
+            # self.trainDataSet = ImageFolderLMDB(datasetTrainDir, transform=self.train_transform)
+        else:
+            self.trainDataSet = datasets.ImageFolder(datasetTrainDir,
+                                                     transform=self.train_transform)
         self.trainDataSampler = distributed.DistributedSampler(
             self.trainDataSet, num_replicas=hvd.size(), rank=hvd.rank()
         ) if multiprocessing is True \
             else None
 
         # TODO: Check whether having multiple workers actually speed up data loading
-        dataLoaderKwargs = {'num_workers': 1}
+        dataLoaderKwargs = {'num_workers': self.config.numThreadsPerWorker}
 
         self.trainDataLoader = DataLoader(
             self.trainDataSet,
@@ -82,8 +90,12 @@ class experimentImagenetResNet50(experimentBase):
             shuffle=True if self.trainDataSampler is None else False,
             **dataLoaderKwargs
         )
-        self.valDataSet = datasets.ImageFolder(datasetValDir,
-                                           transform=self.val_transform)
+        if multiprocessing is False:
+            self.valDataSet = datasets.ImageFolder(datasetValDir,
+                                               transform=self.val_transform)
+        else:
+            self.valDataSet = datasets.ImageFolder(datasetValDir,
+                                                   transform=self.val_transform)
 
         self.valDataSampler = distributed.DistributedSampler(
             self.valDataSet, num_replicas=hvd.size(), rank=hvd.rank()
@@ -502,7 +514,9 @@ if __name__ == '__main__':
         experiment.initialize_from_pre_trained_model()
 
     if args.mode == 'train':
-        experiment.train()
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        cudnn.benchmark = True
+        experiment.train(device=device)
         # Copy the config file into the log directory
         logPath = experiment.config.checkpointSaveDir
         configFileName = os.path.basename(args.config_file)
@@ -519,13 +533,16 @@ if __name__ == '__main__':
             experiment.experimentStatus.targetSparsity = args.custom_sparsity
         if args.override_cluster_size is not None:
             experiment.experimentStatus.pruneCluster = args.override_cluster_size
+            experiment.config.pruneCluster = args.override_cluster_size
         experiment.trace_model(dirnameOverride=os.getcwd(), numMemoryRegions=3, modelName='resnet50_imagenet',
                                foldBN=True, outputLayerID=args.output_layer_id, custom_image_path=args.custom_image_path)
     elif args.mode == 'validate':
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        cudnn.benchmark = True
         if args.custom_sparsity is not None:
             experiment.experimentStatus.targetSparsity = args.custom_sparsity
         if experiment.multiprocessing is False or (experiment.multiprocessing is True and hvd.rank() == 0):
             print('Running inference on the entire validation set. Target sparsity = {level:.4f}'
                   .format(level=experiment.experimentStatus.targetSparsity))
         experiment.eval_prep()
-        experiment.validate(epoch=0)
+        experiment.validate(epoch=0, device=device)

@@ -88,20 +88,21 @@ class EltwiseAdd(nn.Module):
         self.rightInputQuant = QuantStub()
     def forward(self, left_input: torch.Tensor, right_input: torch.Tensor) -> torch.Tensor:
         # Take the shift to match the binary point into account
-        left = self.leftInputQuant(left_input)
-        right = self.rightInputQuant(right_input)
-        if hasattr(self.leftInputQuant, 'qconfig') and hasattr(self.rightInputQuant, 'qconfig'):
-            if self.leftInputQuant.qconfig is not None and self.rightInputQuant.qconfig is not None:
-                leftScale, _ = self.leftInputQuant.activation_post_process.calculate_qparams()
-                rightScale, _ = self.rightInputQuant.activation_post_process.calculate_qparams()
-                # Pick the greater of the two to be the scale
-                scale = max(leftScale.view(1)[0].item(), rightScale.view(1)[0].item())
-                quantMin = self.leftInputQuant.activation_post_process.quant_min
-                quantMax = self.leftInputQuant.activation_post_process.quant_max
-                left = torch.fake_quantize_per_tensor_affine(left, scale, 0, quantMin, quantMax)
-                right = torch.fake_quantize_per_tensor_affine(right, scale, 0, quantMin, quantMax)
-
-        output = left + right
+        # left = self.leftInputQuant(left_input)
+        # right = self.rightInputQuant(right_input)
+        # if hasattr(self.leftInputQuant, 'qconfig') and hasattr(self.rightInputQuant, 'qconfig'):
+        #     if self.leftInputQuant.qconfig is not None and self.rightInputQuant.qconfig is not None:
+        #         leftScale, _ = self.leftInputQuant.activation_post_process.calculate_qparams()
+        #         rightScale, _ = self.rightInputQuant.activation_post_process.calculate_qparams()
+        #         # Pick the greater of the two to be the scale
+        #         scale = max(leftScale.view(1)[0].item(), rightScale.view(1)[0].item())
+        #         quantMin = self.leftInputQuant.activation_post_process.quant_min
+        #         quantMax = self.leftInputQuant.activation_post_process.quant_max
+        #         left = torch.fake_quantize_per_tensor_affine(left, scale, 0, quantMin, quantMax)
+        #         right = torch.fake_quantize_per_tensor_affine(right, scale, 0, quantMin, quantMax)
+        #
+        # output = left + right
+        output = left_input + right_input
         if self.relu is True:
             output = torch.nn.functional.relu(output)
         # New addition on 20200820: Quantize the output

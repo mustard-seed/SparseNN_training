@@ -1,18 +1,24 @@
 # YAML file parsers treats scientific notaiton as strings
-#Configuration for pruning ResNet-50 on ImageNet
+#Configuration for training baseline ResNet-56 on CIFAR 10
 #See Section 4.2 of Deep Residual Learning for Image Classification for settings
 
 # Iterations, etc
-numEpochToTrain: 10
+numEpochToTrain: 8
 batchSizePerWorker: 32
-numThreadsPerWorker: 28
+numThreadsPerWorker: 8
 numPhaseToTrain: 1
 # Learning rates
+
+#From the Accurate, Large minibatch SGD
+#'We start from a learning rate of eta, and increment it by a constant amount at each iteration
+#such that it reaches eta_hat = k * eta after 5 epochs' (2.2, Gradual warmup)
+#'eta = 0.1 * k * n / 256', where n is 32, and n is 8 (5.1)
+#
 
 lrInitialBase: 0.0001
 lrPeakBase: 0.0001
 lrWarmupEpochs: 1
-lrStepSize: 5
+lrStepSize: 6
 lrReductionFactor: 0.1
 lrMomentum: 0.9
 lrMPAdjustmentWarmUpEpochs: 1
@@ -27,9 +33,9 @@ lossWeightL2Lambda: 0.0001
 
 # Pruning and quantization parameters
 prune: False
-pruneCluster: 1
+pruneCluster: 2
 pruneRangeInCluster: 4
-sparsityIncrement: 0.25
+sparsityIncrement: 0.75
 pruneThreshold: 0.005
 quantize: True
 numUpdateBNStatsEpochs: 2
@@ -43,8 +49,8 @@ dataTrainDir: '/home/james/imagenet/train'
 dataValDir: '/home/james/imagenet/val'
 
 # Checkpoints
-checkpointSaveDir: '/home/james/resnet50_logs/imagenet_resnet50_pretrained_iter_BPc1r4_quantize_log'
+checkpointSaveDir: '/home/james/resnet50_logs/imagenet_resnet50_pretrained_os_BPc2r4_L1_quantize_log'
 checkpointSaveFileNameFormat: 'ckpt_epoch{}.pth.tar'
 
 # Log Dir
-logDir: '/home/james/resnet50_logs/imagenet_resnet50_pretrained_iter_BPc1r4_quantize_log'
+logDir: '/home/james/resnet50_logs/imagenet_resnet50_pretrained_os_BPc2r4_L1_quantize_log'

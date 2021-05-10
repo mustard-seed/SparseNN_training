@@ -456,7 +456,7 @@ if __name__ == '__main__':
             experiment.experimentStatus.targetSparsity = args.custom_sparsity
         if args.override_cluster_size is not None:
             experiment.experimentStatus.pruneCluster = args.override_cluster_size
-        experiment.trace_model(dirnameOverride=os.getcwd(), numMemoryRegions=3, modelName='resnet50_imagenet',
+        experiment.trace_model(dirnameOverride=os.getcwd(), numMemoryRegions=3, modelName='traces/resnet56_cifar',
                                foldBN=True, outputLayerID=args.output_layer_id,
                                custom_image_path=args.custom_image_path)
     elif args.mode == 'validate':

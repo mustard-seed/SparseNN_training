@@ -3,16 +3,16 @@
 #See Section 4.2 of Deep Residual Learning for Image Classification for settings
 
 # Iterations, etc
-numEpochToTrain: 6
-batchSizePerWorker: 32
-numThreadsPerWorker: 28
+numEpochToTrain: 8
+batchSizePerWorker: 16
+numThreadsPerWorker: 8
 numPhaseToTrain: 1
 # Learning rates1
 
 lrInitialBase: 0.0001
 lrPeakBase: 0.0001
 lrWarmupEpochs: 1
-lrStepSize: 3
+lrStepSize: 4
 lrReductionFactor: 0.1
 lrMomentum: 0.9
 lrMPAdjustmentWarmUpEpochs: 1
@@ -29,22 +29,22 @@ lossWeightL2Lambda: 0.0001
 prune: True
 pruneCluster: 2
 pruneRangeInCluster: 4
-sparsityIncrement: 0.75
+sparsityIncrement: 0.50
 pruneThreshold: 0.005
 quantize: False
-numUpdateBNStatsEpochs: 2
-numUpdateQatObserverEpochs: 3
+numUpdateBNStatsEpochs: 100
+numUpdateQatObserverEpochs: 100
 
 # See
 seed: 47
 
 # Dataset location
-dataTrainDir: '/homes/jmusel/jmuse/imagenet/train'
-dataValDir: '/homes/jmusel/jmuse/imagenet/val'
+dataTrainDir: '/home/james/imagenet/train'
+dataValDir: '/home/james/imagenet/val'
 
 # Checkpoints
-checkpointSaveDir: 'vgg16_sweep/logs/imagenet_vgg16_pretrained_oneshot_BPc2r4_p75'
+checkpointSaveDir: '/home/james/vgg16_logs/imagenet_vgg16_pretrained_oneshot_BPc2r4_p75'
 checkpointSaveFileNameFormat: 'ckpt_epoch{}.pth.tar'
 
 # Log Dir
-logDir: 'vgg16_sweep/logs/imagenet_vgg16_pretrained_oneshot_BPc2r4_p75'
+logDir: '/home/james/vgg16_logs/imagenet_vgg16_pretrained_oneshot_BPc2r4_p75'

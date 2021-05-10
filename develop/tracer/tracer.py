@@ -538,8 +538,6 @@ class TraceDNN:
         # See https://stackoverflow.com/questions/56937691/making-yaml-ruamel-yaml-always-dump-lists-inline
         # yaml.dump(parameterDict, filename, default_flow_style=None)
         np.savez_compressed(filename,
-            **{self.parameterKeys[idx]: blob.view(blob.numel()).detach().numpy() for idx, blob in enumerate(self.parameters)})
-        np.savez_compressed(filename,
                             **{self.parameterKeys[idx]: blob.view(blob.numel()).detach().numpy() for idx, blob in
                                enumerate(self.parameters)})
 
@@ -719,8 +717,8 @@ class TraceDNN:
             hasBias = False if bias is None else True
 
             # Quantize bias
-            if hasBias:
-                bias = cqat_modules.quantize_bias(module, bias)
+            # if hasBias:
+            #     bias = cqat_modules.quantize_bias(module, bias)
 
             # Determine the SpW parameters
             flagFoundSpWInfo = False
