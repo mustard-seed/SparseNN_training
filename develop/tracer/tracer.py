@@ -157,7 +157,10 @@ class ConvInfo(LayerInfo):
                  channelGroups : int,
 
                  layerID: int,
-                 isAfterInput: bool
+                 isAfterInput: bool,
+
+                 #Weight permutation argument
+                 needToPermuteWeight: bool = True
                  ):
         super().__init__(operationType='conv',
                          outputFracBits=outputFracBits,
@@ -201,6 +204,7 @@ class ConvInfo(LayerInfo):
             'channelGroups does not divide into inputChannels or outputChannels'
         self.outputCurrentNumGroups = channelGroups
         self.isAfterInput = isAfterInput
+        self.needToPermuteWeight = needToPermuteWeight
 
 class MaxPoolInfo(LayerInfo):
     def __init__(self,
@@ -595,7 +599,9 @@ class TraceDNN:
                 idx = int(input.view(nElements)[self.ID_IDX].item())
                 # print('Input idx: {}'.format(idx))
                 inputIDs.append(idx)
-                inputPrecision = input.view(nElements)[self.PRECISION_IDX].item()
+                # inputPrecision = input.view(nElements)[self.PRECISION_IDX].item()
+                inputPrecision = torch.pow(torch.tensor(0.5, dtype=torch.float),
+                                           torch.tensor(self.layerList[idx].outputFracBits, dtype=torch.float))
                 # print('Input precision: {}'.format(inputPrecision))
                 inputPrecisions.append(inputPrecision)
                 inputChannels.append(self.layerList[idx].outputChannels)
@@ -611,9 +617,11 @@ class TraceDNN:
                     idx = int(tensor.view(nElements)[self.ID_IDX].item())
                     # print('Input idx: {}'.format(idx))
                     inputIDs.append(idx)
-                    inputPrecision = tensor.view(nElements)[self.PRECISION_IDX].item()
+                    # inputPrecision = tensor.view(nElements)[self.PRECISION_IDX].item()
+                    inputPrecision = torch.pow(torch.tensor(0.5, dtype=torch.float),
+                                              torch.tensor(self.layerList[idx].outputFracBits, dtype=torch.float))
                     # print('Input precision: {}'.format(inputPrecision))
-                    inputPrecisions.append(tensor.view(nElements)[self.PRECISION_IDX])
+                    inputPrecisions.append(inputPrecision)
                     inputChannels.append(self.layerList[idx].outputChannels)
                     inputGroupsSeenbySource.append(self.layerList[idx].outputCurrentNumGroups)
                     inputHeights.append(self.layerList[idx].outputHeight)
@@ -738,11 +746,11 @@ class TraceDNN:
                 sparsity = 0.0
                 pruneCluster = self.defaultPruneCluster
 
-            # isAfterInput = False
-            # nElements = input.numel()
-            # preIdx = int(input.view(nElements)[self.ID_IDX].item())
-            # if (self.layerList[preIdx].operationType == 'quantstub'):
-            #     isAfterInput = True
+
+            needToPermuteWeight = True
+            if isinstance(module, (nnqat.Linear, nniqat.LinearReLU, cqat_modules.Linear)):
+                needToPermuteWeight = False
+
             newLayer = ConvInfo(
                 outputFracBits=int(outputFracBits),
                 outputChannels=outputChannels,
@@ -767,7 +775,8 @@ class TraceDNN:
 
                 channelGroups=groups,
                 layerID=self.layerID,
-                isAfterInput=isAfterInput
+                isAfterInput=isAfterInput,
+                needToPermuteWeight=needToPermuteWeight
             )
 
             # Extract parameters
@@ -884,7 +893,6 @@ class TraceDNN:
         # Propagate the layer id, and output precision to the next layer
         outputNumel = output.numel()
         output.view(outputNumel)[self.ID_IDX] = self.layerID
-        output.view(outputNumel)[self.PRECISION_IDX] = outputPrecisionScale
 
         self.layerID += 1
         self.layerCount += 1

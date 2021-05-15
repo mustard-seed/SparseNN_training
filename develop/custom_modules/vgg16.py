@@ -65,6 +65,8 @@ class VGG16 (nn.Module):
         x = self.conv5_2(x)
         x = self.conv5_3(x)
         x = self.maxpool5(x)
+        # Change the order from NCHW to NHWC before flattening.
+        x = x.permute(0, 2, 3, 1).contiguous()
         x = self.flatten(x)
         x = self.fc1(x)
         x = self.fc2(x)

@@ -172,6 +172,13 @@ class experimentImagenetVGG16(experimentBase):
         with torch.no_grad():
             modified_weight = torch.mul(self.model.fc1[0].weight, 0.5)
             self.model.fc1[0].weight.copy_(modified_weight)
+            # Change the view of model fc1
+            tempCopy = self.model.fc1[0].weight
+            # Before flattening, the input tensor is Nx512x7x7 (in NCHW format)
+            tempCopy = tempCopy.view(-1, 512, 49)
+            tempCopy = tempCopy.permute(0, 2, 1).contiguous()
+            tempCopy = tempCopy.view(-1, 512*49)
+            self.model.fc1[0].weight.copy_(tempCopy)
             modified_weight = torch.mul(self.model.fc2[0].weight, 0.5)
             self.model.fc2[0].weight.copy_(modified_weight)
 
