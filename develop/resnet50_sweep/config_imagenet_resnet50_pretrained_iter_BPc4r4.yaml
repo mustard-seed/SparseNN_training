@@ -1,20 +1,18 @@
 # YAML file parsers treats scientific notaiton as strings
-#Configuration for training baseline ResNet-56 on CIFAR 10
+#Configuration for pruning ResNet-50 on ImageNet
 #See Section 4.2 of Deep Residual Learning for Image Classification for settings
 
 # Iterations, etc
-# numEpochToTrain: 160
-numEpochToTrain: 16
-batchSizePerWorker: 128
-numThreadsPerWorker: 8
-numPhaseToTrain: 1
+numEpochToTrain: 4
+batchSizePerWorker: 32
+numThreadsPerWorker: 28
+numPhaseToTrain: 3
+# Learning rates1
 
-# Learning rates
-lrInitialBase: 0.1
-lrPeakBase: 0.1
-lrWarmupEpochs: 40
-# lrStepSize: 40
-lrStepSize: 4
+lrInitialBase: 0.0001
+lrPeakBase: 0.0001
+lrWarmupEpochs: 1
+lrStepSize: 2
 lrReductionFactor: 0.1
 lrMomentum: 0.9
 lrMPAdjustmentWarmUpEpochs: 1
@@ -28,10 +26,10 @@ lossWeightL1Lambda: 0.00002
 lossWeightL2Lambda: 0.0001
 
 # Pruning and quantization parameters
-prune: False
-pruneCluster: 2
+prune: True
+pruneCluster: 4
 pruneRangeInCluster: 4
-sparsityIncrement: 0.75
+sparsityIncrement: 0.25
 pruneThreshold: 0.005
 quantize: False
 numUpdateBNStatsEpochs: 100
@@ -41,12 +39,12 @@ numUpdateQatObserverEpochs: 100
 seed: 47
 
 # Dataset location
-dataTrainDir: '/home/james/datasets'
-dataValDir: '/home/james/datasets'
+dataTrainDir: '/homes/jmusel/jmuse/imagenet/train'
+dataValDir: '/homes/jmusel/jmuse/imagenet/val'
 
 # Checkpoints
-checkpointSaveDir: 'cifar10_sweep/cifar10_resnet56_baseline_log'
-checkpointSaveFileNameFormat: 'ckpt_cifar10_resnet56_baseline_epoch{}.pth.tar'
+checkpointSaveDir: 'resnet50_sweep/logs/imagenet_resnet50_pretrained_iter_BPc4r4_log'
+checkpointSaveFileNameFormat: 'ckpt_epoch{}.pth.tar'
 
 # Log Dir
-logDir: 'cifar10_sweep/cifar10_resnet56_baseline_log'
+logDir: 'resnet50_sweep/logs/imagenet_resnet50_pretrained_iter_BPc4r4_log'

@@ -12,7 +12,10 @@ from torch.nn.utils import fuse_conv_bn_weights
 
 
 import custom_modules.custom_modules as cm
-import quantization.quantization as qt
+import quantization.quantization as custom_quant
+# Custom pruning utility, used to extract cluster size, sparsity, prune range
+import pruning.pruning as cm_prune
+import custom_qat.modules as cqat_modules
 
 from typing import List, Union, Tuple
 from easydict import EasyDict as edict
@@ -74,6 +77,8 @@ class LayerInfo(edict):
         self.inputWidths: List[int] = []
         self.inputMemoryLocations: List[int] = []
 
+        self.inputGroupsSeenBySource: List[int] = [1, 1]
+
         self.layerID = layerID
 
 class QuantStubInfo(LayerInfo):
@@ -101,6 +106,7 @@ class DeQuantStubInfo(LayerInfo):
     def __init__(self,
                  inputFracBits: int,
                  inputChannels: int,
+                 inputGroupsSeenBySource: int,
                  inputHeight: int,
                  inputWidth: int,
                  layerID: int
@@ -119,6 +125,7 @@ class DeQuantStubInfo(LayerInfo):
         self.inputChannels.append(inputChannels)
         self.inputHeights.append(inputHeight)
         self.inputWidths.append(inputWidth)
+        self.inputGroupsSeenBySource[0] = inputGroupsSeenBySource
 
 class ConvInfo(LayerInfo):
     """
@@ -135,15 +142,25 @@ class ConvInfo(LayerInfo):
                  inputBorderPadding : int,
                  inputTransConvPadding : int,
                  inputChannels : int,
+                 inputGroupsSeenBySource: int,
 
                  weightFracBits : int,
                  kernelSize : int,
                  kernelStride : int,
                  hasBias: bool,
 
+                 #SpW arguments:
+                 sparsity: float,
+                 pruneClusterSize,
+                 pruneRangeInCluster,
+
                  channelGroups : int,
 
-                 layerID: int
+                 layerID: int,
+                 isAfterInput: bool,
+
+                 #Weight permutation argument
+                 needToPermuteWeight: bool = True
                  ):
         super().__init__(operationType='conv',
                          outputFracBits=outputFracBits,
@@ -170,6 +187,7 @@ class ConvInfo(LayerInfo):
         self.inputWidths.append(inputWidth)
         self.inputBorderPadding = inputBorderPadding
         self.inputTransConvPadding = inputTransConvPadding
+        self.inputGroupsSeenBySource[0] = inputGroupsSeenBySource
 
         self.weightFracBits = weightFracBits
         self.kernelSize = kernelSize
@@ -178,9 +196,15 @@ class ConvInfo(LayerInfo):
         self.biasParameterFileStartPosition: Union[int, None] = None
         self.hasBias = hasBias
 
+        self.pruneClusterSize = pruneClusterSize
+        self.sparsity = sparsity
+        self.pruneRangeInCluster = pruneRangeInCluster
+
         assert (inputChannels % channelGroups == 0) and (outputChannels % channelGroups == 0), \
             'channelGroups does not divide into inputChannels or outputChannels'
         self.outputCurrentNumGroups = channelGroups
+        self.isAfterInput = isAfterInput
+        self.needToPermuteWeight = needToPermuteWeight
 
 class MaxPoolInfo(LayerInfo):
     def __init__(self,
@@ -192,6 +216,7 @@ class MaxPoolInfo(LayerInfo):
                  inputWidth: int,
                  inputBorderPadding: int,
                  inputChannels: int,
+                 inputGroupsSeenBySource: int,
 
                  kernelSize: int,
                  kernelStride: int,
@@ -224,6 +249,7 @@ class MaxPoolInfo(LayerInfo):
         self.inputHeights.append(inputHeight)
         self.inputWidths.append(inputWidth)
         self.inputBorderPadding = inputBorderPadding
+        self.inputGroupsSeenBySource[0] = inputGroupsSeenBySource
 
         self.kernelSize = kernelSize
         self.kernelStride = kernelStride
@@ -238,6 +264,7 @@ class AvgPoolInfo(LayerInfo):
                  inputWidth: int,
                  inputBorderPadding: int,
                  inputChannels: int,
+                 inputGroupsSeenBySource: int,
 
                  kernelSize: int,
                  kernelStride: int,
@@ -272,6 +299,7 @@ class AvgPoolInfo(LayerInfo):
         self.inputHeights.append(inputHeight)
         self.inputWidths.append(inputWidth)
         self.inputBorderPadding = inputBorderPadding
+        self.inputGroupsSeenBySource[0] = inputGroupsSeenBySource
 
         self.kernelSize = kernelSize
         self.kernelStride = kernelStride
@@ -286,6 +314,8 @@ class EltAddInfo(LayerInfo):
                  inputHeight: int,
                  inputWidth: int,
                  inputChannels: int,
+                 inputLeftGroupsSeenBySource: int,
+                 inputRightGroupsSeenBySource: int,
 
                  inputLeftFracBits: int,
                  inputRightFracBits: int,
@@ -307,6 +337,10 @@ class EltAddInfo(LayerInfo):
         else:
             self.inputFracBits[0] = inputLeftFracBits
             self.inputFracBits[1] = inputRightFracBits
+
+        self.inputGroupsSeenBySource[0] = inputLeftGroupsSeenBySource
+        self.inputGroupsSeenBySource[1] = inputRightGroupsSeenBySource
+
         for i in range(2):
             self.inputChannels.append(inputChannels)
             self.inputHeights.append(inputHeight)
@@ -315,8 +349,12 @@ class EltAddInfo(LayerInfo):
 class TraceDNN:
     ID_IDX = 0
     PRECISION_IDX = 1
-    def __init__(self, module: nn.Module, _foldBN: bool=True):
+    def __init__(self, module: nn.Module,
+                 _foldBN: bool=True,
+                 _defaultPruneCluster: int=2,
+                 _defaultPruneRangeInCluster: int=4):
         self.module = module
+        self.module.apply(torch.quantization.disable_observer)
 
         # Run-time arguments
         # Running-counter of the layer IDs
@@ -336,6 +374,11 @@ class TraceDNN:
         self.parameterKeys: List[str] = []
 
         self.foldBN = _foldBN
+        self.defaultPruneCluster = _defaultPruneCluster
+        self.defaultPruneRangeInCluster = _defaultPruneRangeInCluster
+
+        self.activation_intercepts = []
+        self.interceptLayerID = 0
 
     def reset(self):
         self.layerID = 0
@@ -343,6 +386,7 @@ class TraceDNN:
         self.removeHooks()
         self.hookHandles.clear()
         self.layerList.clear()
+        self.activation_intercepts.clear()
         self.inputAdjacencies.clear()
         self.outputAdjacencies.clear()
         self.resetAnnotation()
@@ -498,8 +542,6 @@ class TraceDNN:
         # See https://stackoverflow.com/questions/56937691/making-yaml-ruamel-yaml-always-dump-lists-inline
         # yaml.dump(parameterDict, filename, default_flow_style=None)
         np.savez_compressed(filename,
-            **{self.parameterKeys[idx]: blob.view(blob.numel()).detach().numpy() for idx, blob in enumerate(self.parameters)})
-        np.savez_compressed(filename,
                             **{self.parameterKeys[idx]: blob.view(blob.numel()).detach().numpy() for idx, blob in
                                enumerate(self.parameters)})
 
@@ -525,7 +567,7 @@ class TraceDNN:
         traceFile.close()
         #parameterFile.close()
 
-    def traceHook(self, module, input: Union[T, Tuple[T, T]], output: T) -> T:
+    def traceHook(self, module, input: Union[T, Tuple[T, T]], output: T):
         """
         Pytorch NN module forward hook. Used to intercept NN layer execution order and dependency. This function will be
             called by PyTorch during inference.
@@ -545,22 +587,29 @@ class TraceDNN:
         inputIDs = []
         inputPrecisions = []
         inputChannels = []
+        inputGroupsSeenbySource = []
         inputHeights = []
         inputWidths = []
         input0FracBits = None
         outputPrecisionScale = None
+        isAfterInput = False
         if isinstance(module, QuantStub) is False:
             if isinstance(input, T):
                 nElements = input.numel()
                 idx = int(input.view(nElements)[self.ID_IDX].item())
                 # print('Input idx: {}'.format(idx))
                 inputIDs.append(idx)
-                inputPrecision = input.view(nElements)[self.PRECISION_IDX].item()
+                # inputPrecision = input.view(nElements)[self.PRECISION_IDX].item()
+                inputPrecision = torch.pow(torch.tensor(0.5, dtype=torch.float),
+                                           torch.tensor(self.layerList[idx].outputFracBits, dtype=torch.float))
                 # print('Input precision: {}'.format(inputPrecision))
                 inputPrecisions.append(inputPrecision)
                 inputChannels.append(self.layerList[idx].outputChannels)
+                inputGroupsSeenbySource.append(self.layerList[idx].outputCurrentNumGroups)
                 inputHeights.append(self.layerList[idx].outputHeight)
                 inputWidths.append(self.layerList[idx].outputWidth)
+                if (self.layerList[idx].operationType == 'quantstub'):
+                    isAfterInput = True
             elif isinstance(input, tuple):
                 for tensor in input:
                     nElements = tensor.numel()
@@ -568,12 +617,18 @@ class TraceDNN:
                     idx = int(tensor.view(nElements)[self.ID_IDX].item())
                     # print('Input idx: {}'.format(idx))
                     inputIDs.append(idx)
-                    inputPrecision = tensor.view(nElements)[self.PRECISION_IDX].item()
+                    # inputPrecision = tensor.view(nElements)[self.PRECISION_IDX].item()
+                    inputPrecision = torch.pow(torch.tensor(0.5, dtype=torch.float),
+                                              torch.tensor(self.layerList[idx].outputFracBits, dtype=torch.float))
                     # print('Input precision: {}'.format(inputPrecision))
-                    inputPrecisions.append(tensor.view(nElements)[self.PRECISION_IDX])
+                    inputPrecisions.append(inputPrecision)
                     inputChannels.append(self.layerList[idx].outputChannels)
+                    inputGroupsSeenbySource.append(self.layerList[idx].outputCurrentNumGroups)
                     inputHeights.append(self.layerList[idx].outputHeight)
                     inputWidths.append(self.layerList[idx].outputWidth)
+
+                    if (self.layerList[idx].operationType == 'quantstub'):
+                        isAfterInput = True
             else:
                 raise TypeError('The input argument is neither a tensor nor a tuple of tensors')
 
@@ -613,8 +668,11 @@ class TraceDNN:
         # For the list that convolution layer-like types after qat is applied,
         # see
         # https://github.com/pytorch/pytorch/blob/20ac7362009dd8e0aca6e72fc9357773136a83b8/torch/quantization/quantization_mappings.py#L54
-        if isinstance(module, (nnqat.Linear, nnqat.Conv2d, nniqat.ConvBn2d, nniqat.ConvBnReLU2d, nniqat.ConvReLU2d, nniqat.LinearReLU)):
-            if isinstance(module, (nniqat.ConvReLU2d, nniqat.LinearReLU, nniqat.ConvBnReLU2d)):
+        if isinstance(module, (nnqat.Linear, nnqat.Conv2d, nniqat.ConvBn2d, nniqat.ConvBnReLU2d, nniqat.ConvReLU2d,
+                               nniqat.LinearReLU, cqat_modules.Linear, cqat_modules.Conv2d, cqat_modules.ConvBn2d,
+                               cqat_modules.ConvBnReLU2d, cqat_modules.ConvReLU2d, cqat_modules.LinearReLU)):
+            if isinstance(module, (nniqat.ConvReLU2d, nniqat.LinearReLU, nniqat.ConvBnReLU2d,
+                                   cqat_modules.ConvBnReLU2d, cqat_modules.ConvReLU2d, cqat_modules.LinearReLU)):
                 outputRelu = True
 
             # Determine padding and kernel size
@@ -622,7 +680,8 @@ class TraceDNN:
             kernelSize = inputWidths[0]
             kernelStride = kernelSize
             groups = 1
-            if isinstance(module, (nnqat.Conv2d, nniqat.ConvBn2d, nniqat.ConvBnReLU2d, nniqat.ConvReLU2d)):
+            if isinstance(module, (nnqat.Conv2d, nniqat.ConvBn2d, nniqat.ConvBnReLU2d, nniqat.ConvReLU2d,
+                                   cqat_modules.Conv2d, cqat_modules.ConvBn2d, cqat_modules.ConvBnReLU2d, cqat_modules.ConvReLU2d)):
                 # Extract the padding for convolution.
                 # Assume that the horizontal and vertical paddings are the same
                 padding = module.padding[0]
@@ -635,7 +694,8 @@ class TraceDNN:
             if module.bias is not None:
                 bias = module.bias
             # Perform batchnorm folding and update the quantization parameters if necessary
-            if self.foldBN and isinstance(module, (nniqat.ConvBn2d, nniqat.ConvBnReLU2d)):
+            if self.foldBN and isinstance(module, (nniqat.ConvBn2d, nniqat.ConvBnReLU2d,
+                                                   cqat_modules.ConvBn2d, cqat_modules.ConvBnReLU2d)):
                 """
                 Assumptions:
                     - This is a fused model
@@ -646,15 +706,51 @@ class TraceDNN:
                 weight, bias = fuse_conv_bn_weights(
                     module.weight, module.bias, module.running_mean, module.running_var,
                     module.eps, module.gamma, module.beta)
-            weight_post_process = module.weight_fake_quant
-            weight_post_process.enable_observer()
-            weight_post_process(weight)
-            weight_post_process.disable_observer()
 
             # Determine weight frac bits
-            weightPrecisionScale = weight_post_process.scale.view(1)
-            weightFracBits = int(torch.round(torch.log2(1.0 / weightPrecisionScale)).view(1)[0].item())
+            # The quantization observer for weight of fused conv_bn already monitors the folded weights
+            # see: https://github.com/pytorch/pytorch/blob/7f73f1d591afba823daa4a99a939217fb54d7688/torch/nn/intrinsic/qat/modules/conv_fused.py#L113
+            weight_quantizer = module.weight_fake_quant
+            # weight_post_process.enable_observer()
+            # weight_post_process(weight)
+            # weight_post_process.disable_observer()
+            # weight_quantizer = custom_quant.RoundedMinMaxObserver()
+            # weight_quantizer.forward(weight)
+            weightPrecisionScale, _ = weight_quantizer.calculate_qparams()
+            weightPrecisionScale = weightPrecisionScale.view(1)
+            weightFracBits = int(torch.ceil(torch.log2(1.0 / weightPrecisionScale)).view(1)[0].item())
+            # Just use the quantizer to quantize the weights before exporting
+            weight = weight_quantizer.forward(weight)
+
             hasBias = False if bias is None else True
+
+            # Quantize bias
+            # if hasBias:
+            #     bias = cqat_modules.quantize_bias(module, bias)
+
+            # Determine the SpW parameters
+            flagFoundSpWInfo = False
+            pruneRangeInCluster = None
+            pruneCluster = None
+            sparsity = None
+            for _, hook in module._forward_pre_hooks.items():
+                if isinstance(hook, cm_prune.balancedPruningMethod):
+                    flagFoundSpWInfo = True
+                    pruneRangeInCluster = hook.pruneRangeInCluster
+                    sparsity = hook.sparsity
+                    pruneCluster = hook.clusterSize
+
+            if not flagFoundSpWInfo:
+                print ("Using default sparsity pruning parameters for module {}".format(module))
+                pruneRangeInCluster = self.defaultPruneRangeInCluster
+                sparsity = 0.0
+                pruneCluster = self.defaultPruneCluster
+
+
+            needToPermuteWeight = True
+            if isinstance(module, (nnqat.Linear, nniqat.LinearReLU, cqat_modules.Linear)):
+                needToPermuteWeight = False
+
             newLayer = ConvInfo(
                 outputFracBits=int(outputFracBits),
                 outputChannels=outputChannels,
@@ -666,14 +762,21 @@ class TraceDNN:
                 inputBorderPadding=padding,
                 inputTransConvPadding=0,
                 inputChannels=inputChannels[0],
+                inputGroupsSeenBySource=inputGroupsSeenbySource[0],
 
                 weightFracBits=int(weightFracBits),
                 kernelSize=kernelSize,
                 kernelStride=kernelStride,
                 hasBias=hasBias,
 
+                pruneRangeInCluster=pruneRangeInCluster,
+                pruneClusterSize=pruneCluster,
+                sparsity=sparsity,
+
                 channelGroups=groups,
-                layerID=self.layerID
+                layerID=self.layerID,
+                isAfterInput=isAfterInput,
+                needToPermuteWeight=needToPermuteWeight
             )
 
             # Extract parameters
@@ -708,6 +811,7 @@ class TraceDNN:
                 inputWidth=inputWidths[0],
                 inputBorderPadding=padding,
                 inputChannels=inputChannels[0],
+                inputGroupsSeenBySource=inputGroupsSeenbySource[0],
 
                 kernelSize=module.kernel_size,
                 kernelStride=module.stride,
@@ -731,6 +835,7 @@ class TraceDNN:
                 inputWidth=inputWidths[0],
                 inputBorderPadding=padding,
                 inputChannels=inputChannels[0],
+                inputGroupsSeenBySource=inputGroupsSeenbySource[0],
 
                 kernelSize=module.kernel_size,
                 kernelStride=module.stride,
@@ -752,6 +857,8 @@ class TraceDNN:
 
                 inputLeftFracBits=int(input0FracBits),
                 inputRightFracBits=int(input1FracBits),
+                inputLeftGroupsSeenBySource=int(inputGroupsSeenbySource[0]),
+                inputRightGroupsSeenBySource=int(inputGroupsSeenbySource[1]),
 
                 layerID=self.layerID
             )
@@ -767,6 +874,7 @@ class TraceDNN:
             newLayer = DeQuantStubInfo(
                 inputFracBits=int(input0FracBits),
                 inputChannels=input[0].size()[1],
+                inputGroupsSeenBySource=inputGroupsSeenbySource[0],
                 inputHeight=input[0].size()[2] if len(input[0].size()) > 2 else 1,
                 inputWidth=input[0].size()[3] if len(input[0].size()) > 2 else 1,
                 layerID=self.layerID
@@ -785,13 +893,17 @@ class TraceDNN:
         # Propagate the layer id, and output precision to the next layer
         outputNumel = output.numel()
         output.view(outputNumel)[self.ID_IDX] = self.layerID
-        output.view(outputNumel)[self.PRECISION_IDX] = outputPrecisionScale
 
         self.layerID += 1
         self.layerCount += 1
 
         # print("Layer ID: {} \n Modified output: {}".format(self.layerID-1, output.view(outputNumel)[0:2]))
-        return output
+
+    def interceptHook(self, module, input: Union[T, Tuple[T, T]], output: T):
+        # print ('Intercepting layer {}'.format(self.layerID))
+        if self.layerID == self.interceptLayerID:
+            self.activation_intercepts.append(deepcopy(output.clone().detach()))
+        self.layerID += 1
 
     def traceModel(self, input: Union[T, Tuple[T, T]]) -> T:
         """
@@ -817,16 +929,46 @@ class TraceDNN:
         # 3. Run the model once, and the hooks should be called.
         self.module.eval()
         if isinstance(input, tuple):
-            output = self.module(*input)
+            self.module(*input)
         else:
-            output = self.module(input)
+            self.module(input)
         #output = self.module(input)
 
         # 4. Remove the hooks
         self.removeHooks()
 
-        return output
+    def getOutput(self, input: Union[T, Tuple[T, T]], layerID=-1) -> T:
+        # 1. Reset everything
+        self.reset()
 
+        self.interceptLayerID = layerID
+        # 2. Apply hooks
+        stack = [self.module]
+        while len(stack) > 0:
+            module = stack.pop()
+            # If module is a leaf, then add to the graph
+            if isinstance(module, (
+            QuantStub, DeQuantStub, cm.EltwiseAdd, nn.Conv2d, nn.Linear, cm.MaxPool2dRelu, cm.AvgPool2dRelu)):
+                # print('Adding intercept hook to layer{}'.format(module))
+                handle = module.register_forward_hook(self.interceptHook)
+                self.hookHandles.append(handle)
+            # If the module is not a leaf, then push its children onto the stack
+            else:
+                for child in module.children():
+                    stack.append(child)
 
+        # 3. Run the model once, and the hooks should be called.
+        self.module.eval()
+        output = None
+        if isinstance(input, tuple):
+            output = self.module(*input)
+        else:
+            output = self.module(input)
 
+        if layerID == -1:
+            # print('Dumping the final output')
+            return output
 
+        self.removeHooks()
+        print('Dumping output of layer {}'.format(layerID))
+        return self.activation_intercepts[0]

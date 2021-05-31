@@ -1,5 +1,6 @@
 horovod==0.19.*
-tensorboard==2.2.2
 easydict==1.9
+pyarrow==3.0.0
+lmdb
 # make sure horovod is re-compiled if environment is re-built
 --no-binary=horovod

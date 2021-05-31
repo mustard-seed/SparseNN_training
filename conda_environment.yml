@@ -3,12 +3,21 @@ channels:
   - conda-forge
   - defaults
 dependencies:
+  - bokeh=1.4
+  - cmake=3.16 # insures that Gloo library extensions will be built
+  - cudnn=7.6
+  - cupti=10.1
+  - cxx-compiler=1.0 # insures C and C++ compilers are available
+  - mpi4py=3.0 # installs cuda-aware openmpi
+  - nccl=2.5
+  - nvcc_linux-64=10.1 # configures environment to be "cuda-aware"
   - pip=20.0
-  - cpuonly
-  - python=3.6.10
-  - pytorch=1.5.0
-  - setuptools=46.4.0=py36_0
-  - torchvision=0.6.0
+  - pip:
+      - -r file:requirements.txt
+  - python=3.7
+  - pytorch==1.5.0
+  - tensorboard=2.1
+  - torchvision=0.6
   - pip:
     - -r file:requirements.txt
 

@@ -4,13 +4,13 @@
 
 # Iterations, etc
 # numEpochToTrain: 160
-numEpochToTrain: 16
+numEpochToTrain: 8
 batchSizePerWorker: 128
 numThreadsPerWorker: 8
 numPhaseToTrain: 1
 
 # Learning rates
-lrInitialBase: 0.1
+lrInitialBase: 0.001
 lrPeakBase: 0.1
 lrWarmupEpochs: 40
 # lrStepSize: 40
@@ -28,7 +28,7 @@ lossWeightL1Lambda: 0.00002
 lossWeightL2Lambda: 0.0001
 
 # Pruning and quantization parameters
-prune: False
+prune: True
 pruneCluster: 2
 pruneRangeInCluster: 4
 sparsityIncrement: 0.75
@@ -45,8 +45,8 @@ dataTrainDir: '/home/james/datasets'
 dataValDir: '/home/james/datasets'
 
 # Checkpoints
-checkpointSaveDir: 'cifar10_sweep/cifar10_resnet56_baseline_log'
-checkpointSaveFileNameFormat: 'ckpt_cifar10_resnet56_baseline_epoch{}.pth.tar'
+checkpointSaveDir: 'cifar10_sweep/cifar10_resnet56_oneshot_BPc2r4_log'
+checkpointSaveFileNameFormat: 'ckpt_epoch{}.pth.tar'
 
 # Log Dir
-logDir: 'cifar10_sweep/cifar10_resnet56_baseline_log'
+logDir: 'cifar10_sweep/cifar10_resnet56_oneshot_BPc2r4_log'

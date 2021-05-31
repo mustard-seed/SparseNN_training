@@ -68,6 +68,10 @@ class RoundedMinMaxObserver(MinMaxObserver):
         roundedScale = round_to_power_of_two(scale)
         return roundedScale, zeroPoint
 
+    # @torch.jit.export
+    # def forward(self, xorig):
+    #     return super(RoundedMinMaxObserver, self).forward(xorig)
+
 
 class RoundedMovingAverageMinMaxObserver(MovingAverageMinMaxObserver):
     """
