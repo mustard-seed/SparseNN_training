@@ -25,7 +25,6 @@ from custom_modules.resnet import ResNet, imagenet_resnet50, BasicBlock, Bottlen
 from utils.meters import ClassificationMeter, TimeMeter
 from experiment.experiment import experimentBase, globalActivationDict, globalWeightDict, hook_activation
 from tracer.tracer import TraceDNN as Tracer
-from lmdb_loader.folder2lmdb import ImageFolderLMDB
 
 import horovod.torch as hvd
 

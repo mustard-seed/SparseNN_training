@@ -703,9 +703,14 @@ class TraceDNN:
                     - Warning: If bn folding have occured, this the following folding will mess up the weights and bias
                     -   Reason: PyTorch's BN folding function only change conv weights and biases, but does affect BN parameters
                 """
+                # PyTorch v1.5.0
+                # weight, bias = fuse_conv_bn_weights(
+                #     module.weight, module.bias, module.running_mean, module.running_var,
+                #     module.eps, module.gamma, module.beta)
+                # PyTorch v1.6.0
                 weight, bias = fuse_conv_bn_weights(
-                    module.weight, module.bias, module.running_mean, module.running_var,
-                    module.eps, module.gamma, module.beta)
+                        module.weight, module.bias, module.bn.running_mean, module.bn.running_var,
+                        module.bn.eps, module.bn.weight, module.bn.bias)
 
             # Determine weight frac bits
             # The quantization observer for weight of fused conv_bn already monitors the folded weights
