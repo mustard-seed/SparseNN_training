@@ -23,7 +23,7 @@ from custom_modules.custom_modules import ConvBNReLU, LinearReLU, ConvReLU, Conv
 import pruning.pruning as custom_pruning
 from custom_modules.vgg16 import VGG16
 from utils.meters import ClassificationMeter, TimeMeter
-from experiment.experiment import experimentBase, globalActivationDict, globalWeightDict, hook_activation
+from experiment.experiment import experimentBase, globalActivationDict, globalWeightDict, hook_activation, load_state_dict_mod
 from tracer.tracer import TraceDNN as Tracer
 
 import horovod.torch as hvd
@@ -264,7 +264,8 @@ class experimentImagenetVGG16(experimentBase):
         module = VGG16()
         module = self.quantize_model_method(module, self.qatConfig)
         module = self.prune_network_method(module, self.experimentStatus.targetSparsity, self.config)
-        module.load_state_dict(self.model.state_dict())
+        # module.load_state_dict(self.model.state_dict())
+        load_state_dict_mod(module, self.model.state_dict())
         with torch.no_grad():
             # Hack
             # module.inputConvBNReLU._modules['0'].running_mean.zero_()

@@ -12,6 +12,7 @@ import torch.optim as optim
 import torch.nn.intrinsic.qat
 import torch.utils.data.distributed
 import torch.backends.cudnn as cudnn
+from torch.nn.intrinsic import qat as nniqat
 import yaml
 from easydict import EasyDict as edict
 from abc import ABC, abstractmethod
@@ -41,6 +42,50 @@ def hook_activation(module, input, output):
 def remove_hook_activation(forwardHookHandlesDict:dict):
     for name, handle in forwardHookHandlesDict.items():
         handle.remove()
+
+def load_state_dict_conv_bn_pre_hook(state_dict, prefix, local_metadata, strict,
+                              missing_keys, unexpected_keys, error_msgs):
+    """
+    Pre-hook called before the base _load_from_stat_dict function is called in _ConvBnNd
+    :param state_dict:
+    :param prefix:
+    :param local_metadata:
+    :param strict:
+    :param missing_keys:
+    :param unexpected_keys:
+    :param error_msgs:
+    :return:
+    """
+    version = local_metadata.get('version', None)
+    if version is None:
+        # BN related parameters and buffers were moved into the BN module for v2
+        v2_to_v1_names = {
+            'bn.weight': 'gamma',
+            'bn.bias': 'beta',
+            'bn.running_mean': 'running_mean',
+            'bn.running_var': 'running_var',
+            'bn.num_batches_tracked': 'num_batches_tracked',
+        }
+        for v2_name, v1_name in v2_to_v1_names.items():
+            if prefix + v2_name in state_dict:
+                missing_keys.remove(prefix + v2_name)
+
+def load_state_dict_mod(module, stateDict):
+    convBNHooks = []
+    load_state_dict_mod_helper(module, convBNHooks)
+    module.load_state_dict(stateDict)
+    for hook in convBNHooks:
+        hook.remove()
+
+
+def load_state_dict_mod_helper(module, convBNHooks):
+    if isinstance(module, (nniqat.ConvBnReLU2d, nniqat.ConvBn2d)):
+        handle = module._register_load_state_dict_pre_hook(load_state_dict_conv_bn_pre_hook)
+        convBNHooks.append(handle)
+    else:
+        for name, child in module._modules.items():
+            if child is not None:
+                load_state_dict_mod_helper(child, convBNHooks)
 
 def set_random_seeds(random_seed=0):
 
@@ -388,7 +433,8 @@ class experimentBase(object):
         # 2. Overwrite entries in the existing model
         model_dict.update(saved_model_dict)
         # 3. Load the new state dicc
-        self.model.load_state_dict(saved_model_dict)
+        #self.model.load_state_dict(saved_model_dict)
+        load_state_dict_mod(self.model, saved_model_dict)
 
     def restore_experiment_from_checkpoint(self, checkpoint, loadModelOnly=False):
         """
@@ -604,8 +650,14 @@ class experimentBase(object):
             optimizer.zero_grad()
             totalLoss = self.evaluate(data, target, device, isTrain=True)
             # print('totalLoss: ', totalLoss)
+            # if (self.multiprocessing is True and hvd.rank() == 0):
+            #     print("Performing backprop.")
             totalLoss.backward()
+            # if (self.multiprocessing is True and hvd.rank() == 0):
+            #     print("Taking an optimizer step.")
             optimizer.step()
+            # if (self.multiprocessing is True and hvd.rank() == 0):
+            #     print("Done")
 
             batchTime = (time.time() - end)
             end = time.time()
@@ -927,6 +979,7 @@ class experimentBase(object):
             # TODO: update the prune_network arugment to use the target sparsity
             self.prune_network(sparsityTarget=self.experimentStatus.targetSparsity)
             self.experimentStatus.flagPruned = True
+
 
 
 
