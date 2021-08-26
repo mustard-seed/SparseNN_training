@@ -1,4 +1,5 @@
 #Micro-range Clustered Bank Balanced Sparsity Training
+
 ##About
 This repository contains the CNN pruning and quantization code for our FPL2021 paper, 
 **Leveraging Fine-grained Structured Sparsity for CNN Inference on Systolic Array Architectures**.
