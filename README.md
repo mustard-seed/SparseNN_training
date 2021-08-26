@@ -1,6 +1,6 @@
-#Micro-range Clustered Bank Balanced Sparsity Training
+# Micro-range Clustered Bank Balanced Sparsity Training
 
-##About
+## About
 This repository contains the CNN pruning and quantization code for our FPL2021 paper, 
 **Leveraging Fine-grained Structured Sparsity for CNN Inference on Systolic Array Architectures**.
 
@@ -14,7 +14,7 @@ the [companion repository](https://github.com/mustard-seed/SparseDNNAccelerator)
 1. Clone this repository
 2. Run setup_environment.sh
 
-##File Organization
+## File Organization
 ```
 .
 ├── conda_environment.yml
@@ -41,7 +41,7 @@ the [companion repository](https://github.com/mustard-seed/SparseDNNAccelerator)
 └── setup_environment.sh
 ```
 
-##Example: Weight pruning and quantization on VGG-16
+## Example: Weight pruning and quantization on VGG-16
 This example assumes that CNN training is performed on a single-node platform without using any distributed training.
 
 0. Change path to the repository's root, 
@@ -96,5 +96,5 @@ Three files will be generated. First, the topology file, vgg16_imagenet_trace.ya
 Second, the parameter file, vgg16_imagenet_parameters.npz.
 Finally, the reference input/output for validation, vgg16_imagenet_inout.yaml.
 
-##Further Reading
+## Further Reading
 To be added.
