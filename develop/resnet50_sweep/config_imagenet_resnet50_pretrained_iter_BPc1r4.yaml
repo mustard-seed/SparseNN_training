@@ -43,8 +43,8 @@ dataTrainDir: '/homes/jmusel/jmuse/imagenet/train'
 dataValDir: '/homes/jmusel/jmuse/imagenet/val'
 
 # Checkpoints
-checkpointSaveDir: 'resnet50_sweep/logs/imagenet_resnet50_pretrained_iter_BPc1r4_log'
+checkpointSaveDir: '/homes/jmusel/jmuse/imagenet_resnet50_pretrained_iter_BPc1r4_log_test'
 checkpointSaveFileNameFormat: 'ckpt_epoch{}.pth.tar'
 
 # Log Dir
-logDir: 'resnet50_sweep/logs/imagenet_resnet50_pretrained_iter_BPc1r4_log'
+logDir: '/homes/jmusel/jmuse/imagenet_resnet50_pretrained_iter_BPc1r4_log_test'

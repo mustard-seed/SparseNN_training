@@ -39,12 +39,12 @@ numUpdateQatObserverEpochs: 2
 seed: 47
 
 # Dataset location
-dataTrainDir: '/home/james/imagenet/train'
-dataValDir: '/home/james/imagenet/val'
+dataTrainDir: '/homes/jmusel/jmuse/imagenet/train'
+dataValDir: '/homes/jmusel/jmuse/imagenet/val'
 
 # Checkpoints
-checkpointSaveDir: '/home/james/vgg16_logs/imagenet_vgg16_pretrained_quantize'
+checkpointSaveDir: '/homes/jmusel/jmuse/vgg16_logs/imagenet_vgg16_pretrained_quantize'
 checkpointSaveFileNameFormat: 'ckpt_epoch{}.pth.tar'
 
 # Log Dir
-logDir: '/home/james/vgg16_logs/imagenet_vgg16_pretrained_quantize'
+logDir: '/homes/jmusel/jmuse/vgg16_logs/imagenet_vgg16_pretrained_quantize'

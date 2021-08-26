@@ -4,8 +4,8 @@
 
 # Iterations, etc
 numEpochToTrain: 4
-batchSizePerWorker: 64
-numThreadsPerWorker: 8
+batchSizePerWorker: 32
+numThreadsPerWorker: 28
 numPhaseToTrain: 3
 # Learning rates
 
@@ -45,12 +45,12 @@ numUpdateQatObserverEpochs: 100
 seed: 47
 
 # Dataset location
-dataTrainDir: '/home/james/imagenet/train'
-dataValDir: '/home/james/imagenet/val'
+dataTrainDir: '/homes/jmusel/jmuse/imagenet/train'
+dataValDir: '/homes/jmusel/jmuse/imagenet/val'
 
 # Checkpoints
-checkpointSaveDir: '/home/james/resnet50_logs/imagenet_resnet50_pretrained_iter_BPc2r4_L1_log'
+checkpointSaveDir: '/homes/jmusel/jmuse/resnet50_sweep/imagenet_resnet50_pretrained_iter_BPc2r4_L1_log'
 checkpointSaveFileNameFormat: 'ckpt_epoch{}.pth.tar'
 
 # Log Dir
-logDir: '/home/james/resnet50_logs/imagenet_resnet50_pretrained_iter_BPc2r4_L1_log'
+logDir: '/homes/jmusel/jmuse/resnet50_sweep/imagenet_resnet50_pretrained_iter_BPc2r4_L1_log'
