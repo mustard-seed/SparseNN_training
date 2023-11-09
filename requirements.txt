@@ -1,6 +1,6 @@
 horovod==0.19.*
 easydict==1.9
-pyarrow==3.0.0
+pyarrow==14.0.1
 lmdb
 # make sure horovod is re-compiled if environment is re-built
 --no-binary=horovod
